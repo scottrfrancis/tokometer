@@ -1,0 +1,31 @@
+# --- local data & secrets: NEVER commit these ---
+# the ledger holds your actual usage history
+ledger.db
+*.db
+*.db-wal
+*.db-shm
+
+# per-machine config (git author email, paths, enabled harnesses)
+tokometer.env
+# keep the template:
+!tokometer.env.example
+
+# generated reports (contain your usage numbers + repo names)
+reports/
+# high-water-mark state files
+state/
+# scraped Cursor exports
+cursor-exports/
+
+# logs
+*.log
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# macOS
+.DS_Store
