@@ -26,33 +26,38 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-TOKOMETER_HOME = Path(os.path.expanduser(
-    os.environ.get("TOKOMETER_HOME", "~/.tokometer")
-))
-STATE_PATH = TOKOMETER_HOME / "state" / "push_state.json"
-
 KINDS = (
     "time_entry", "todo", "note", "tokometer_usage",
     "commit_metric", "pr_metric", "cursor_repo_hour", "session_log",
 )
 
 
+def _state_path() -> Path:
+    """Resolve at call time (NOT import time) so env overrides take effect."""
+    home = Path(os.path.expanduser(
+        os.environ.get("TOKOMETER_HOME", "~/.tokometer")
+    ))
+    return home / "state" / "push_state.json"
+
+
 def load() -> dict:
-    if not STATE_PATH.exists():
+    p = _state_path()
+    if not p.exists():
         return {"_meta": {"last_success_at": None, "last_failure": None}}
     try:
-        return json.loads(STATE_PATH.read_text())
+        return json.loads(p.read_text())
     except (json.JSONDecodeError, OSError):
         return {"_meta": {"last_success_at": None, "last_failure": None}}
 
 
 def save(state: dict) -> None:
-    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(STATE_PATH.parent), suffix=".tmp")
+    p = _state_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(state, f, indent=2, sort_keys=True)
-        os.replace(tmp, STATE_PATH)
+        os.replace(tmp, p)
     except Exception:
         try:
             os.unlink(tmp)
