@@ -1,0 +1,11 @@
+[Unit]
+Description=Trigger tokometer-push every FLIGHTPLAN_RETRY_INTERVAL (catch-up cadence)
+
+[Timer]
+# Default: 2h. Override by writing a drop-in if needed.
+OnUnitActiveSec=2h
+OnBootSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

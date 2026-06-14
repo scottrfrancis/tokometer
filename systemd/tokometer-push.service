@@ -1,0 +1,13 @@
+[Unit]
+Description=tokometer flightplan push (catch-up batch)
+Documentation=https://github.com/scottrfrancis/flightplan/blob/main/docs/SRS.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.tokometer/flightplan.env
+WorkingDirectory=%h/repos/tokometer
+ExecStart=/usr/bin/env python3 -m push.client
+StandardOutput=journal
+StandardError=journal
