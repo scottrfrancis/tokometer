@@ -20,6 +20,29 @@ chmod +x "$TOKOMETER_HOME/harvest.sh" "$TOKOMETER_HOME/daily.sh"
 # ledger schema (idempotent)
 sqlite3 "$TOKOMETER_HOME/ledger.db" < "$SRC/schema.sql"
 
+# flightplan extensions: session_log_raw + collectors/session_logs.py + push/
+if [ -f "$SRC/schema_session_logs.sql" ]; then
+  sqlite3 "$TOKOMETER_HOME/ledger.db" < "$SRC/schema_session_logs.sql" \
+    && echo "migrated: session_log_raw table"
+fi
+
+# also stage the push package + session_logs collector for the flightplan path.
+# Existing tokometer installs stay valid without these (no env vars set ->
+# push.client refuses to run; session_logs collector is opt-in via cron).
+if [ -d "$SRC/push" ]; then
+  mkdir -p "$TOKOMETER_HOME/push"
+  cp "$SRC/push/__init__.py" "$TOKOMETER_HOME/push/__init__.py"
+  cp "$SRC/push/state.py"    "$TOKOMETER_HOME/push/state.py"
+  cp "$SRC/push/client.py"   "$TOKOMETER_HOME/push/client.py"
+fi
+if [ -f "$SRC/collectors/session_logs.py" ]; then
+  cp "$SRC/collectors/session_logs.py" "$TOKOMETER_HOME/collectors/session_logs.py"
+fi
+# Example env (operator copies to ~/.tokometer/flightplan.env and fills in)
+if [ -f "$SRC/flightplan.env.example" ]; then
+  cp "$SRC/flightplan.env.example" "$TOKOMETER_HOME/flightplan.env.example"
+fi
+
 # additive migrations for pre-existing ledgers (ignore "duplicate column" errors)
 sqlite3 "$TOKOMETER_HOME/ledger.db" \
   "ALTER TABLE usage ADD COLUMN credits INTEGER DEFAULT 0;" 2>/dev/null \
