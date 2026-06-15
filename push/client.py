@@ -19,13 +19,24 @@ import json
 import os
 import socket
 import sqlite3
+import sys
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Iterable
 
-from . import state as state_mod
+# Allow being run as a script (`python3 client.py`) AND as a module
+# (`python3 -m push.client`). When invoked as a script, the package
+# context is missing, so a relative `from . import state` fails. Bootstrap
+# the parent dir so `import state as state_mod` works either way.
+if __package__ in (None, ""):
+    _PARENT = os.path.dirname(os.path.realpath(__file__))
+    if _PARENT not in sys.path:
+        sys.path.insert(0, _PARENT)
+    import state as state_mod  # type: ignore[no-redef]
+else:
+    from . import state as state_mod
 
 TOKOMETER_HOME = Path(os.path.expanduser(
     os.environ.get("TOKOMETER_HOME", "~/.tokometer")
@@ -38,41 +49,34 @@ SCHEMA_VERSION = 1
 
 # ─── kind -> SQLite table + endpoint path + row column mapping ───────────
 
+# Tables we know how to ship. v1 scope: the b-CLI tables (time_entry,
+# todo, note), tokometer's usage table, and session_log_raw. The other
+# tokometer collector tables (commit_metric, pr_metric, cursor_repo_hour)
+# use composite PKs (no `uid` column) AND have schema-name mismatches
+# with the bronze side -- shipping them needs either an ALTER on the
+# tokometer schema to add a uid OR a different watermark strategy. Punted
+# to v1.1; see KNOWN_LIMITATIONS at the bottom of this file.
 KIND_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
-    # kind: (sqlite_table, endpoint_path, columns_to_ship)
     "time_entry": (
         "time_entry", "time-entries",
         ("uid", "host", "start_ts", "end_ts", "duration_sec",
-         "customer_raw", "project_raw", "tags", "notes", "cwd", "session_id"),
+         "customer", "project", "tags", "notes", "cwd", "session_id"),
     ),
     "todo": (
         "todo", "todos",
-        ("uid", "host", "created_ts", "done_ts", "customer_raw", "project_raw",
-         "text", "state", "blocker", "due_date", "tags", "cwd"),
+        ("uid", "host", "created_at", "done_date", "customer", "project",
+         "title", "state", "blocker", "due", "tags", "cwd"),
     ),
     "note": (
         "note", "notes",
-        ("uid", "host", "created_ts", "customer_raw", "project_raw",
-         "text", "tags", "cwd"),
+        ("uid", "host", "ts", "customer", "project",
+         "text", "cwd"),
     ),
     "tokometer_usage": (
         "usage", "tokometer-usage",
         ("uid", "ts", "harness", "model", "account", "session_id", "cwd",
-         "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens",
-         "cost_usd"),
-    ),
-    "commit_metric": (
-        "commit_metric", "commit-metrics",
-        ("uid", "repo_path", "sha", "ts", "author",
-         "code_add", "code_del", "files", "is_merge"),
-    ),
-    "pr_metric": (
-        "pr_metric", "pr-metrics",
-        ("uid", "repo", "pr_number", "ts", "state", "title", "author", "branch"),
-    ),
-    "cursor_repo_hour": (
-        "cursor_repo_hour", "cursor-repo-hours",
-        ("uid", "repo", "hour_ts", "edits", "accepts", "rejects"),
+         "input_tokens", "output_tokens", "cache_read_tokens",
+         "cache_write_tokens", "cost_usd"),
     ),
     "session_log": (
         "session_log_raw", "session-logs",
@@ -80,18 +84,33 @@ KIND_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
          "log_date", "log_time_local", "topic",
          "raw_md", "raw_md_sha256", "mtime", "size_bytes"),
     ),
+    # Deferred to v1.1: commit_metric, pr_metric, cursor_repo_hour.
+    # These tokometer tables have no uid column (composite PKs) AND have
+    # column name mismatches with the bronze side. Will need either a
+    # tokometer schema migration OR a different push strategy.
 }
 
 
-# Column renames + transforms for non-1:1 mappings between tokometer's
-# SQLite columns and the bronze.* Pydantic models.
+# Column renames for non-1:1 mappings between tokometer's SQLite column
+# names and the bronze.* Pydantic-model names on the server.
 COLUMN_REMAPS: dict[str, dict[str, str]] = {
-    "tokometer_usage": {"ts": "ts"},          # passthrough but documents the model alignment
-    "commit_metric": {                         # tokometer uses repo_path, code_add/del; bronze uses repo, loc_added/removed
-        "repo_path": "repo",
-        "code_add": "loc_added",
-        "code_del": "loc_removed",
-        "files": "files_changed",
+    "time_entry": {
+        # b CLI uses unsuffixed customer/project; bronze uses *_raw
+        "customer": "customer_raw",
+        "project": "project_raw",
+    },
+    "todo": {
+        "customer": "customer_raw",
+        "project": "project_raw",
+        "title": "text",             # b stores the todo body in 'title'
+        "due": "due_date",
+        "created_at": "created_ts",
+        "done_date": "done_ts",
+    },
+    "note": {
+        "customer": "customer_raw",
+        "project": "project_raw",
+        "ts": "created_ts",          # b's note timestamp
     },
 }
 
@@ -135,11 +154,17 @@ def _post(url: str, token: str, body: dict, timeout: int = 30) -> tuple[int, dic
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
+        # Server responded; convey status + parsed body if possible.
         try:
             payload = json.loads(exc.read().decode("utf-8"))
         except Exception:
             payload = {"detail": exc.reason}
         return exc.code, payload
+    except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as exc:
+        # Network-level failure: connection refused / DNS / timeout / etc.
+        # Return a sentinel 0 status so callers can route this through the
+        # "retry next tick" path uniformly with HTTP 5xx handling.
+        return 0, {"detail": f"network: {type(exc).__name__}: {exc}"}
 
 
 # ─── per-kind fetcher ────────────────────────────────────────────────────
@@ -251,7 +276,10 @@ def push_all(*, kinds: Iterable[str] | None = None,
     if not Path(db_path).exists():
         return {"ok": False, "error": f"ledger.db missing: {db_path}"}
 
-    selected = tuple(kinds) if kinds else state_mod.KINDS
+    # Source of truth for which kinds we ship is KIND_TABLES, not the
+    # state module's KINDS list (which can drift from this file's
+    # capability list and would result in "unknown kind" errors).
+    selected = tuple(kinds) if kinds else tuple(KIND_TABLES.keys())
     state = state_mod.load()
     results: list[dict] = []
 
