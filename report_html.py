@@ -391,7 +391,8 @@ def repo_of(cwd):
     """Resolve a working dir to a repo label (basename under ~/workspace)."""
     if not cwd:
         return None
-    parts = [p for p in cwd.split("/") if p]
+    # normalize Windows backslashes so mixed-separator dirs anchor on "workspace"
+    parts = [p for p in cwd.replace("\\", "/").split("/") if p]
     if "workspace" in parts:
         i = parts.index("workspace")
         if i + 1 < len(parts):
