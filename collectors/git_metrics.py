@@ -40,8 +40,12 @@ DOC_EXT = (".md", ".rst", ".adoc", ".txt")
 
 
 def repo_label(path):
-    """Match report_html.repo_of: first segment under .../workspace, else leaf."""
-    parts = [p for p in path.split("/") if p]
+    """Match report_html.repo_of: first segment under .../workspace, else leaf.
+
+    Normalize Windows backslashes first so mixed-separator paths
+    (e.g. ``C:\\Users\\me/workspace\\repo``) resolve to the leaf, not the tail.
+    """
+    parts = [p for p in path.replace("\\", "/").split("/") if p]
     if "workspace" in parts:
         i = parts.index("workspace")
         if i + 1 < len(parts):
