@@ -31,6 +31,17 @@ REPO_SCAN_ROOT = Path(os.path.expanduser(
     os.environ.get("TOKOMETER_REPO_ROOT", "~/repos")
 ))
 
+# How many directory levels below the scan root to descend looking for a
+# session-logs dir. Repos are often grouped (group/repo/session-logs) and may
+# nest the dir under .claude/, so the default is generous.
+REPO_SCAN_DEPTH = int(os.environ.get("TOKOMETER_REPO_DEPTH", "6"))
+
+# Directories never worth walking into when hunting for session logs.
+_PRUNE_DIRS = frozenset({
+    ".git", "node_modules", ".venv", "venv", "__pycache__", ".mypy_cache",
+    ".pytest_cache", "dist", "build", ".next", "target", ".tox", ".idea",
+})
+
 # Filename heuristics:
 #   handoff-YYYY-MM-DD-HHMM.md
 #   mine-report-YYYY-MM-DD.md
@@ -82,40 +93,58 @@ def iter_session_log_paths(
 ) -> Iterable[tuple[Path, str, str | None]]:
     """Yield (abs_path, scope, source_project?) tuples.
 
-    - global: ~/.claude/session-logs/*.md
-    - project: <repo>/.claude/session-logs/*.md for each repo under repo_root
-      with a .claude/session-logs directory.
+    - global: ~/.claude/session-logs/**/*.md (recursive; picks up archive/)
+    - project: any <repo>/session-logs/*.md OR <repo>/.claude/session-logs/*.md
+      found while walking repo_root up to REPO_SCAN_DEPTH levels deep. Repos are
+      commonly grouped (group/repo/session-logs) and the dir may sit at the repo
+      root (the /session-logger default) or under .claude/, so both conventions
+      and nesting are supported. source_project is the basename of the dir that
+      contains the session-logs dir (its .claude parent, if any, is skipped).
 
     scope is 'global' | 'project'; source_project is set only for project scope.
     """
     if repo_root is None:
         repo_root = REPO_SCAN_ROOT
 
-    # global
+    # global (recursive so archived logs are captured too)
     global_dir = home / ".claude" / "session-logs"
     if global_dir.is_dir():
-        for p in sorted(global_dir.glob("*.md")):
+        for p in sorted(global_dir.rglob("*.md")):
             yield (p, "global", None)
 
-    # per-repo: shallow scan, repo_root/<name>/.claude/session-logs
+    # per-repo: bounded recursive walk, finding dirs literally named
+    # "session-logs" (whether at a repo root or under .claude/).
     if repo_root.is_dir():
-        for repo in sorted(repo_root.iterdir()):
-            if not repo.is_dir():
+        base_depth = len(repo_root.parts)
+        for dirpath, dirnames, filenames in os.walk(repo_root):
+            d = Path(dirpath)
+            depth = len(d.parts) - base_depth
+            # prune noise and stop descending past the configured depth
+            dirnames[:] = [
+                x for x in sorted(dirnames)
+                if x not in _PRUNE_DIRS and depth < REPO_SCAN_DEPTH
+            ]
+            if d.name != "session-logs":
                 continue
-            sl = repo / ".claude" / "session-logs"
-            if sl.is_dir():
-                for p in sorted(sl.glob("*.md")):
-                    yield (p, "project", repo.name)
+            # repo = the dir owning these logs; unwrap a .claude wrapper.
+            repo = d.parent.parent if d.parent.name == ".claude" else d.parent
+            for fn in sorted(filenames):
+                if fn.endswith(".md"):
+                    yield (d / fn, "project", repo.name)
 
 
 def _rel_filepath(p: Path, scope: str, source_project: Optional[str], home: Path) -> str:
-    """For global: relative to ~. For project: relative to repo root."""
+    """For global: relative to ~. For project: relative to repo root.
+
+    .../<repo>/.claude/session-logs/foo.md -> .claude/session-logs/foo.md
+    .../<repo>/session-logs/foo.md         -> session-logs/foo.md
+    Check the .claude variant first since that path also contains the bare one.
+    """
     if scope == "project":
-        # ~/repos/<repo>/.claude/session-logs/foo.md -> .claude/session-logs/foo.md
-        marker = "/.claude/"
         s = str(p)
-        if marker in s:
-            return s.split(marker, 1)[1] and "/.claude/" + s.split("/.claude/", 1)[1]
+        for marker in ("/.claude/session-logs/", "/session-logs/"):
+            if marker in s:
+                return marker.lstrip("/") + s.split(marker, 1)[1]
     try:
         return str(p.relative_to(home))
     except ValueError:
