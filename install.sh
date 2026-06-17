@@ -130,6 +130,18 @@ if [ "$(uname)" = "Darwin" ]; then
 PLISTEOF
   launchctl unload "$PLIST" 2>/dev/null || true
   launchctl load -w "$PLIST" && echo "scheduled daily.sh at 04:00 (launchd: ai.tokometer.daily)"
+elif [ -n "${WINDIR:-}" ] || uname -s | grep -qiE 'mingw|msys|cygwin'; then
+  # Windows (Git Bash): no launchd/cron. Print the one-time Task Scheduler command;
+  # full walkthrough in docs/WINDOWS.md. (We don't auto-register: it needs the user's
+  # Git Bash path and a PowerShell call best run/inspected by the operator.)
+  echo "Windows detected -- schedule daily.sh once via Task Scheduler (PowerShell):"
+  echo '  $b="C:\Program Files\Git\bin\bash.exe"; $h="/c/Users/'"$USER"'/.tokometer"'
+  echo '  Register-ScheduledTask -TaskName tokometer-daily -Force \'
+  echo '    -Action  (New-ScheduledTaskAction -Execute $b -Argument "-lc `"$h/daily.sh >> $h/daily.log 2>&1`"") \'
+  echo '    -Trigger (New-ScheduledTaskTrigger -Daily -At 4:00AM) \'
+  echo '    -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable) \'
+  echo '    -Principal (New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive)'
+  echo "  (see docs/WINDOWS.md for python3 alias + UTF-8 prerequisites)"
 fi
 
 echo "done. run: $TOKOMETER_HOME/harvest.sh"

@@ -68,10 +68,11 @@ Don't use one? Turn it off in config — it vanishes from the report, no errors,
 
 ## Requirements
 
-- macOS or Linux, `python3` (3.9+, **stdlib only**) and `sqlite3`
+- macOS, Linux, or **Windows** (via Git Bash — see [docs/WINDOWS.md](docs/WINDOWS.md)),
+  `python3` (3.9+, **stdlib only**) and `sqlite3`
 - `git` (code metrics), optionally `gh` (merged-PR metrics)
 - *Optional:* `playwright` — only for the Cursor dashboard scrape
-- Scheduling: macOS uses **launchd** (installed automatically); on Linux, add the cron line `install.sh` prints
+- Scheduling: macOS uses **launchd** (installed automatically); on Linux, add the cron line `install.sh` prints; on Windows, register a Task Scheduler job ([docs/WINDOWS.md §5](docs/WINDOWS.md#5-schedule-the-daily-run-with-task-scheduler))
 
 ## Quick start
 
@@ -87,6 +88,11 @@ python3 ~/.tokometer/report_html.py   # build the HTML report (prints its path)
 ```
 
 The scheduled `daily.sh` harvests, rolls over the month, regenerates the HTML report, and opens it.
+
+> **On Windows?** The same scripts run under Git Bash with a few one-time adaptations
+> (install `python3` + `sqlite3`, shadow the Store `python3` alias, force UTF-8, and schedule
+> via Task Scheduler instead of launchd/cron). The full walkthrough is in
+> **[docs/WINDOWS.md](docs/WINDOWS.md)**.
 
 ## Configuration — `~/.tokometer/tokometer.env`
 
