@@ -65,6 +65,51 @@ def test_collect_inserts_rows(tmp_tokometer, tmp_home_with_logs):
     assert count == 4
 
 
+def test_iter_finds_bare_project_session_logs(tmp_path):
+    """Repos that keep logs at <repo>/session-logs/ (project-root convention,
+    not under .claude/) must be discovered."""
+    repos = tmp_path / "ws"
+    proj = repos / "coder"
+    (proj / "session-logs").mkdir(parents=True)
+    (proj / "session-logs" / "2026-06-13-0900.md").write_text("x")
+    paths = list(sl.iter_session_log_paths(home=tmp_path / "nohome", repo_root=repos))
+    proj_paths = [p for p in paths if p[1] == "project"]
+    assert len(proj_paths) == 1
+    assert proj_paths[0][2] == "coder"
+
+
+def test_iter_finds_nested_repo_session_logs(tmp_path):
+    """Repos nested two levels deep (e.g. group/subrepo/session-logs) must be
+    discovered, not just direct children of repo_root."""
+    repos = tmp_path / "ws"
+    nested = repos / "Catalyst-RCM" / "Dashboard"
+    (nested / "session-logs").mkdir(parents=True)
+    (nested / "session-logs" / "2026-06-13-1000-x.md").write_text("y")
+    paths = list(sl.iter_session_log_paths(home=tmp_path / "nohome", repo_root=repos))
+    proj = [p for p in paths if p[1] == "project"]
+    assert any(p[2] == "Dashboard" for p in proj)
+
+
+def test_iter_prunes_heavy_dirs(tmp_path):
+    """session-logs dirs buried inside node_modules/.git must be ignored."""
+    repos = tmp_path / "ws"
+    nm = repos / "app" / "node_modules" / "pkg"
+    (nm / "session-logs").mkdir(parents=True)
+    (nm / "session-logs" / "2026-06-13-1100.md").write_text("z")
+    paths = list(sl.iter_session_log_paths(home=tmp_path / "nohome", repo_root=repos))
+    assert all("node_modules" not in str(p[0]) for p in paths)
+
+
+def test_rel_filepath_bare_and_claude(tmp_path):
+    home = tmp_path / "h"
+    bare = Path("/ws/coder/session-logs/2026-06-13-0900.md")
+    assert sl._rel_filepath(bare, "project", "coder", home) == \
+        "session-logs/2026-06-13-0900.md"
+    claude = Path("/ws/coder/.claude/session-logs/foo.md")
+    assert sl._rel_filepath(claude, "project", "coder", home) == \
+        ".claude/session-logs/foo.md"
+
+
 def test_collect_is_idempotent(tmp_tokometer, tmp_home_with_logs):
     db_path = tmp_tokometer / "ledger.db"
     for _ in range(2):
