@@ -16,6 +16,7 @@ import os
 import re
 import socket
 import sqlite3
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -171,10 +172,13 @@ def collect(
     cur = con.cursor()
     host = _host()
     counts = {"scanned": 0, "inserted": 0, "skipped": 0}
+    project_seen = 0
 
     try:
         for abs_path, scope, source_project in iter_session_log_paths(home, repo_root):
             counts["scanned"] += 1
+            if scope == "project":
+                project_seen += 1
             cls = _classify_filename(abs_path.name)
             if cls is None:
                 counts["skipped"] += 1
@@ -209,6 +213,20 @@ def collect(
     finally:
         if own_con:
             con.close()
+
+    # Fail loud: a readable repo root that yields zero project session-logs dirs
+    # almost always means the scan can't see the tree (wrong root, unmounted or
+    # FDA-blocked external volume in a launchd context) -- not "nothing to do".
+    # Mirror git_metrics' explicit "no repos under X" line so a scheduled run
+    # can't masquerade as a clean success. (Skipped when repo_root is None or
+    # absent, which is a legitimate "no per-repo scanning" configuration.)
+    rr = repo_root if repo_root is not None else REPO_SCAN_ROOT
+    if rr.is_dir() and project_seen == 0:
+        print(
+            f"[session_logs] no session-logs dirs found under {rr} "
+            f"(check the path, the volume mount, or Full Disk Access)",
+            file=sys.stderr,
+        )
 
     return counts
 

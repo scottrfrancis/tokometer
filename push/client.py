@@ -262,6 +262,20 @@ def push_kind(con: sqlite3.Connection, *, kind: str, state: dict,
 
 # ─── orchestration: push everything ──────────────────────────────────────
 
+def _has_real_failure(results: list[dict]) -> bool:
+    """Whether any result represents a genuine failure.
+
+    A missing source table is expected on capture-only nodes (the b-CLI tables
+    time_entry/todo/note simply don't exist there), so it must NOT count as a
+    failure -- otherwise last_success_at never advances and every run looks
+    broken. Real failures (HTTP 5xx, network errors, 422) still count.
+    """
+    return any(
+        r["error"] and not r["error"].startswith("missing table")
+        for r in results
+    )
+
+
 def push_all(*, kinds: Iterable[str] | None = None,
              ingest_url: str | None = None,
              token: str | None = None,
@@ -289,17 +303,21 @@ def push_all(*, kinds: Iterable[str] | None = None,
             res = push_kind(con, kind=kind, state=state,
                             ingest_url=ingest_url, token=token)
             results.append(res.to_dict())
-            if res.error and not res.error.startswith("422"):
+            # 422 (quarantine) and missing-table (optional source) are not
+            # recorded as failures -- the former is server-side validation, the
+            # latter is expected on capture-only nodes.
+            if (res.error and not res.error.startswith("422")
+                    and not res.error.startswith("missing table")):
                 state_mod.record_failure(state, kind, res.error)
     finally:
         con.close()
 
-    any_error = any(r["error"] for r in results)
-    if not any_error:
+    real_failure = _has_real_failure(results)
+    if not real_failure:
         state_mod.record_success(state)
     state_mod.save(state)
 
-    return {"ok": not any_error, "results": results}
+    return {"ok": not real_failure, "results": results}
 
 
 if __name__ == "__main__":

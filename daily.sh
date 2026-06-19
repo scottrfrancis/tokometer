@@ -23,6 +23,16 @@ echo "===== tokometer daily $(date) ====="
 # 1. harvest all collectors (opencode, droid, copilot, git, gh, cursor)
 "$TOKOMETER_HOME/harvest.sh"
 
+# 1a. session-log collector. Not part of harvest.sh's hardcoded list, but run
+#     here so it lands in the daily flow with a visible [session_logs] line in
+#     this log (its absence here once hid a stalled collector for days). Reads
+#     TOKOMETER_REPO_ROOT from tokometer.env, sourced above.
+if [ -f "$TOKOMETER_HOME/collectors/session_logs.py" ]; then
+  "$PY" "$TOKOMETER_HOME/collectors/session_logs.py" \
+    && echo "[$(date)] session_logs ok" \
+    || echo "[$(date)] session_logs FAILED"
+fi
+
 # 1b. monthly rollover -- catch-up safe; a no-op except at the first run after a
 #     month turns over (so it survives the Mac being off at midnight on the 1st).
 "$PY" "$TOKOMETER_HOME/monthly.py" \
