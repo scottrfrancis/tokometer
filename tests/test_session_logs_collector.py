@@ -110,6 +110,22 @@ def test_rel_filepath_bare_and_claude(tmp_path):
         ".claude/session-logs/foo.md"
 
 
+def test_collect_warns_when_repo_root_yields_nothing(tmp_tokometer, tmp_path, capsys):
+    """If TOKOMETER_REPO_ROOT exists but no session-logs dirs are found (e.g. the
+    launchd context can't read an external volume), fail loud on stderr instead of
+    silently reporting a clean zero-row scan -- mirrors git_metrics' 'no repos' line."""
+    import sqlite3
+    empty = tmp_path / "empty_ws"
+    empty.mkdir()
+    db = tmp_tokometer / "ledger.db"
+    con = sqlite3.connect(str(db))
+    sl.collect(con=con, home=tmp_path / "nohome", repo_root=empty)
+    con.close()
+    err = capsys.readouterr().err
+    assert "no session-logs" in err.lower()
+    assert str(empty) in err
+
+
 def test_collect_is_idempotent(tmp_tokometer, tmp_home_with_logs):
     db_path = tmp_tokometer / "ledger.db"
     for _ in range(2):

@@ -164,6 +164,26 @@ def test_push_kind_handles_missing_table_gracefully(mock_ingest, tmp_tokometer):
     assert "missing table" in (res.error or "")
 
 
+def test_missing_table_is_not_a_real_failure():
+    """A missing optional source table (e.g. the b-CLI tables on a capture-only
+    node) must NOT count as a failure -- otherwise last_success_at never updates."""
+    results = [
+        {"kind": "time_entry", "error": "missing table time_entry"},
+        {"kind": "note", "error": "missing table note"},
+        {"kind": "tokometer_usage", "error": None},
+        {"kind": "session_log", "error": None},
+    ]
+    assert pc._has_real_failure(results) is False
+
+
+def test_real_error_is_a_failure():
+    results = [
+        {"kind": "note", "error": "missing table note"},
+        {"kind": "tokometer_usage", "error": "http 503: {'detail': 'down'}"},
+    ]
+    assert pc._has_real_failure(results) is True
+
+
 def test_push_kind_no_rows_returns_zero(mock_ingest, tmp_tokometer):
     db = tmp_tokometer / "ledger.db"
     from push import state as ps
