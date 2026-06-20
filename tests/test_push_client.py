@@ -99,12 +99,101 @@ def test_push_kind_happy_path_advances_watermark(mock_ingest, seeded_ledger,
     assert res.accepted == 2
     assert res.error is None
 
-    assert ps.watermark(state, "tokometer_usage") == "u-test-200"
+    assert ps.watermark(state, "tokometer_usage") == 2  # max rowid shipped
 
     assert mock_ingest.requests[0][0] == "/ingest/tokometer-usage"
     body = mock_ingest.requests[0][1]
     assert body["schema_version"] == 1
     assert len(body["rows"]) == 2
+
+
+def test_new_row_with_lexically_smaller_uid_is_still_pushed(
+    mock_ingest, tmp_tokometer
+):
+    """Regression: the watermark must track INSERTION ORDER (rowid), not the
+    lexical max uid.
+
+    uids are ``<harness>:<random-uuid>`` (e.g. ``opencode:msg_...`` vs
+    ``claude-code:...``) -- NOT monotonic over time. With a lexical
+    ``WHERE uid > ? ORDER BY uid`` watermark, once a high-sorting uid
+    (``opencode:``) advances the cursor, every later-inserted lower-sorting
+    uid (``claude-code:``) is permanently skipped. This stranded ~1,852
+    real usage rows on the studio-3 capture node.
+    """
+    db = tmp_tokometer / "ledger.db"
+    con = sqlite3.connect(str(db))
+    # Inserted FIRST -> lowest rowid, but HIGHEST lexical uid.
+    con.execute(
+        "INSERT INTO usage (uid, ts, harness, model, input_tokens, output_tokens, "
+        "                   source, confidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("opencode:zzz", "2026-06-09T17:42:04Z", "opencode", "x", 1, 1,
+         "cli-json", "exact"),
+    )
+    con.commit()
+    con.close()
+
+    from push import state as ps
+    state = ps.load()
+
+    # First push ships the opencode row and advances the watermark.
+    mock_ingest.response_body = {"accepted": 1, "conflicted": 0}
+    con = sqlite3.connect(str(db))
+    res1 = pc.push_kind(con, kind="tokometer_usage", state=state,
+                        ingest_url=mock_ingest.url, token="t")
+    con.close()
+    assert res1.attempted == 1
+
+    # A NEW row arrives later (higher rowid) whose uid sorts BEFORE the cursor.
+    con = sqlite3.connect(str(db))
+    con.execute(
+        "INSERT INTO usage (uid, ts, harness, model, input_tokens, output_tokens, "
+        "                   source, confidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("claude-code:aaa", "2026-06-20T05:59:53Z", "claude-code", "opus", 9, 9,
+         "session-file", "exact"),
+    )
+    con.commit()
+    con.close()
+
+    con = sqlite3.connect(str(db))
+    res2 = pc.push_kind(con, kind="tokometer_usage", state=state,
+                        ingest_url=mock_ingest.url, token="t")
+    con.close()
+
+    assert res2.attempted == 1, (
+        "Newer row with a lexically smaller uid must still be pushed"
+    )
+    assert mock_ingest.requests[-1][1]["rows"][0]["uid"] == "claude-code:aaa"
+
+
+def test_watermark_is_stored_as_integer_rowid(mock_ingest, seeded_ledger):
+    """After a successful push the watermark is the max rowid shipped (an int),
+    not a uid string -- so it stays monotonic regardless of uid content."""
+    mock_ingest.response_body = {"accepted": 2, "conflicted": 0}
+    from push import state as ps
+    state = ps.load()
+    con = sqlite3.connect(str(seeded_ledger))
+    pc.push_kind(con, kind="tokometer_usage", state=state,
+                 ingest_url=mock_ingest.url, token="t")
+    con.close()
+    wm = ps.watermark(state, "tokometer_usage")
+    assert isinstance(wm, int), f"watermark should be an int rowid, got {wm!r}"
+    assert wm == 2  # two rows inserted -> rowids 1, 2
+
+
+def test_legacy_uid_string_watermark_is_ignored(mock_ingest, seeded_ledger):
+    """Migration: an old lexical-uid watermark left in push_state.json must be
+    treated as 'start over' (re-walk by rowid). Re-sent rows are deduped
+    server-side by the uid UNIQUE key, so a full re-walk is safe."""
+    from push import state as ps
+    state = ps.load()
+    state["tokometer_usage"] = "opencode:msg_legacy_stringy_cursor"  # legacy value
+    mock_ingest.response_body = {"accepted": 0, "conflicted": 2}
+    con = sqlite3.connect(str(seeded_ledger))
+    res = pc.push_kind(con, kind="tokometer_usage", state=state,
+                       ingest_url=mock_ingest.url, token="t")
+    con.close()
+    assert res.attempted == 2, "legacy string watermark must not strand rows"
+    assert ps.watermark(state, "tokometer_usage") == 2
 
 
 def test_push_kind_422_quarantines_does_not_advance_watermark(

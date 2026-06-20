@@ -169,31 +169,60 @@ def _post(url: str, token: str, body: dict, timeout: int = 30) -> tuple[int, dic
 
 # ─── per-kind fetcher ────────────────────────────────────────────────────
 
-def _fetch_rows(con: sqlite3.Connection, kind: str, since_uid: str | None,
-                limit: int) -> list[dict]:
+def _as_rowid(value: Any) -> int | None:
+    """Coerce a stored watermark to an integer rowid, or None.
+
+    The watermark is the source table's ``rowid`` (monotonic insertion order).
+    A legacy lexical-uid string left over from the old `uid`-based watermark is
+    treated as None -> re-walk from the start. That re-walk is safe: the server
+    dedups on each row's `uid` UNIQUE key, so already-shipped rows come back as
+    `conflicted`, never duplicated. See KNOWN_LIMITATIONS.
+    """
+    if isinstance(value, bool):  # bool is an int subclass -- reject explicitly
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _fetch_rows(con: sqlite3.Connection, kind: str, since_rowid: int | None,
+                limit: int) -> tuple[list[dict], int | None]:
+    """Fetch up to ``limit`` rows after ``since_rowid``, ordered by rowid.
+
+    Returns ``(rows, max_rowid)`` where ``max_rowid`` is the highest rowid in
+    the batch (or None when empty) -- the value to advance the watermark to on a
+    successful push. The watermark must be insertion order (rowid), NOT the
+    lexical uid: uids are ``<harness>:<uuid>`` and not monotonic over time, so a
+    ``uid > cursor`` watermark permanently strands later rows whose uid sorts
+    below an already-seen one.
+    """
     sqlite_table, _, cols = KIND_TABLES[kind]
     remap = COLUMN_REMAPS.get(kind, {})
     col_list = ", ".join(cols)
-    if since_uid:
+    if since_rowid is not None:
         sql = (
-            f"SELECT {col_list} FROM {sqlite_table} "
-            f"WHERE uid > ? "
-            f"ORDER BY uid LIMIT ?"
+            f"SELECT rowid, {col_list} FROM {sqlite_table} "
+            f"WHERE rowid > ? "
+            f"ORDER BY rowid LIMIT ?"
         )
-        cur = con.execute(sql, (since_uid, limit))
+        cur = con.execute(sql, (since_rowid, limit))
     else:
         sql = (
-            f"SELECT {col_list} FROM {sqlite_table} "
-            f"ORDER BY uid LIMIT ?"
+            f"SELECT rowid, {col_list} FROM {sqlite_table} "
+            f"ORDER BY rowid LIMIT ?"
         )
         cur = con.execute(sql, (limit,))
 
     rows: list[dict] = []
+    max_rowid: int | None = None
     for row in cur:
+        max_rowid = row[0]  # rowid is the first selected column, ascending
         rec = {}
         for i, c in enumerate(cols):
             target = remap.get(c, c)
-            rec[target] = row[i]
+            rec[target] = row[i + 1]  # +1: skip the leading rowid column
         # Some bronze.* tables require `host`; for usage rows we set it from
         # this device's hostname if missing.
         rec.setdefault("host", _host())
@@ -203,7 +232,7 @@ def _fetch_rows(con: sqlite3.Connection, kind: str, since_uid: str | None,
         elif "tags" in rec and not rec["tags"]:
             rec["tags"] = None
         rows.append(rec)
-    return rows
+    return rows, max_rowid
 
 
 # ─── per-kind push ───────────────────────────────────────────────────────
@@ -226,8 +255,8 @@ def push_kind(con: sqlite3.Connection, *, kind: str, state: dict,
     if not have:
         return PushResult(kind=kind, error=f"missing table {sqlite_table}")
 
-    since = state_mod.watermark(state, kind)
-    rows = _fetch_rows(con, kind, since, batch)
+    since = _as_rowid(state_mod.watermark(state, kind))
+    rows, max_rowid = _fetch_rows(con, kind, since, batch)
     if not rows:
         return PushResult(kind=kind, attempted=0)
 
@@ -240,11 +269,11 @@ def push_kind(con: sqlite3.Connection, *, kind: str, state: dict,
     status, payload = _post(url, token, body)
 
     if status == 200:
-        # Advance watermark to the highest uid we just shipped (regardless of
+        # Advance watermark to the highest rowid we just shipped (regardless of
         # accepted vs conflicted -- on-conflict counts still mean "Beaufort
-        # has it").
-        max_uid = max(r["uid"] for r in rows)
-        state_mod.set_watermark(state, kind, max_uid)
+        # has it"). rowid is monotonic insertion order, so the next batch picks
+        # up exactly the rows added since, no matter what their uid sorts to.
+        state_mod.set_watermark(state, kind, max_rowid)
         return PushResult(
             kind=kind, attempted=len(rows),
             accepted=payload.get("accepted", 0),
@@ -318,6 +347,29 @@ def push_all(*, kinds: Iterable[str] | None = None,
     state_mod.save(state)
 
     return {"ok": not real_failure, "results": results}
+
+
+# ─── KNOWN_LIMITATIONS ────────────────────────────────────────────────────
+#
+# 1. Watermark = source-table rowid (insertion order), persisted per kind in
+#    push_state.json. This REPLACES the original lexical `uid > cursor`
+#    watermark, which silently stranded rows: uids are `<harness>:<uuid>` (and
+#    `sl-<host>-<sha8>-<mtime_ns>` for session logs) -- not monotonic over time
+#    -- so once a high-sorting uid advanced the cursor, every later-inserted
+#    lower-sorting uid was skipped forever.
+#      Migration: a legacy string watermark is coerced to None by `_as_rowid`,
+#    triggering a one-time full re-walk by rowid. Re-sent rows dedup on the
+#    server's `uid` UNIQUE key (returned as `conflicted`), so the re-walk is
+#    safe and idempotent.
+#      Caveat: rowid as a watermark assumes append-only source tables (the
+#    collectors INSERT OR IGNORE, never DELETE the max row), so rowids never
+#    rewind. If a table ever becomes WITHOUT ROWID or starts deleting rows,
+#    revisit this.
+#
+# 2. Deferred to v1.1: commit_metric, pr_metric, cursor_repo_hour. These
+#    tokometer tables have composite PKs (no `uid` column) AND column-name
+#    mismatches with the bronze side. Shipping them needs either a tokometer
+#    schema migration to add a uid OR a different push strategy.
 
 
 if __name__ == "__main__":
