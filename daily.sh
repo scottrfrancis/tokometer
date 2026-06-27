@@ -20,8 +20,15 @@ PY="$(command -v python3)"
 
 echo "===== tokometer daily $(date) ====="
 
-# 1. harvest all collectors (opencode, droid, copilot, git, gh, cursor)
-"$TOKOMETER_HOME/harvest.sh"
+# 1. harvest all collectors (opencode, droid, copilot, git, gh, cursor).
+# Invoke via /bin/bash explicitly rather than letting harvest.sh's `#!/usr/bin/env
+# bash` shebang run it: under macOS launchd, the `/usr/bin/env` indirection inserts
+# an ungranted binary into TCC's responsible-process chain, so harvest's python
+# grandchildren lose the /bin/bash Full-Disk/removable-volume grant and silently
+# read zero files from external volumes like /Volumes/workspace (git_metrics &
+# gh_metrics reported "no repos"). Keeping the whole chain on /bin/bash preserves
+# the grant. (No-op on Linux/cron where TCC doesn't apply.)
+/bin/bash "$TOKOMETER_HOME/harvest.sh"
 
 # 1a. session-log collector. Not part of harvest.sh's hardcoded list, but run
 #     here so it lands in the daily flow with a visible [session_logs] line in
