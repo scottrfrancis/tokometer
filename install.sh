@@ -110,6 +110,11 @@ if [ "${TOKOMETER_SKIP_PLAYWRIGHT:-0}" != "1" ] && ! python3 -c "import playwrig
 fi
 
 # schedule daily.sh at 04:00 via launchd (macOS-native; cron is blocked by TCC).
+# NOTE: ProgramArguments invokes /bin/bash explicitly (not the daily.sh shebang).
+# launchd would otherwise run it via `#!/usr/bin/env bash`, inserting /usr/bin/env
+# into TCC's responsible-process chain and severing the /bin/bash Full-Disk grant
+# that lets collectors read external volumes (/Volumes/workspace). Grant Full Disk
+# Access to /bin/bash (stable, Apple-signed) -- NOT to a versioned Homebrew python.
 if [ "$(uname)" = "Darwin" ]; then
   AGENT_DIR="$HOME/Library/LaunchAgents"
   PLIST="$AGENT_DIR/ai.tokometer.daily.plist"
@@ -120,7 +125,7 @@ if [ "$(uname)" = "Darwin" ]; then
 <plist version="1.0">
 <dict>
     <key>Label</key><string>ai.tokometer.daily</string>
-    <key>ProgramArguments</key><array><string>$TOKOMETER_HOME/daily.sh</string></array>
+    <key>ProgramArguments</key><array><string>/bin/bash</string><string>$TOKOMETER_HOME/daily.sh</string></array>
     <key>StartCalendarInterval</key><dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>0</integer></dict>
     <key>StandardOutPath</key><string>$TOKOMETER_HOME/daily.log</string>
     <key>StandardErrorPath</key><string>$TOKOMETER_HOME/daily.log</string>

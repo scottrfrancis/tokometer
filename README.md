@@ -89,6 +89,17 @@ python3 ~/.tokometer/report_html.py   # build the HTML report (prints its path)
 
 The scheduled `daily.sh` harvests, rolls over the month, regenerates the HTML report, and opens it.
 
+> **macOS — Full Disk Access for scheduled runs.** If your git scan root is on an
+> **external/removable volume** (e.g. `/Volumes/workspace`), grant **Full Disk Access**
+> to **`/bin/bash`** (System Settings → Privacy & Security → Full Disk Access → add
+> `/bin/bash`). launchd background jobs can't be shown the per-volume consent prompt,
+> so without this `git_metrics`/`session_logs` silently report zero. The installed
+> launchd job runs `daily.sh` *as* `/bin/bash` (and `daily.sh` calls `harvest.sh` the
+> same way) specifically so this single, stable grant flows down TCC's
+> responsible-process chain to the python collectors. Grant `/bin/bash`, **not** a
+> versioned Homebrew/miniforge `python3` — those move on every upgrade and the grant
+> goes stale.
+
 > **On Windows?** The same scripts run under Git Bash with a few one-time adaptations
 > (install `python3` + `sqlite3`, shadow the Store `python3` alias, force UTF-8, and schedule
 > via Task Scheduler instead of launchd/cron). The full walkthrough is in
