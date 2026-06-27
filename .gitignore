@@ -20,6 +20,9 @@ cursor-exports/
 # logs
 *.log
 
+# local session logs (cross-tool dev records; not part of the distributed tool)
+session-logs/
+
 # python
 __pycache__/
 *.py[cod]
