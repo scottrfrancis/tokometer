@@ -124,6 +124,17 @@ def test_collect_emits_events(tmp_tokometer):
             "tool_result_disk", "request_failure"}.issubset(kinds)
 
 
+def test_collect_flags_slow_requests(tmp_tokometer):
+    con = _connect(tmp_tokometer)
+    ccl.collect(con=con, log_glob=FIXTURE_GLOB)
+    rows = con.execute(
+        "SELECT detail FROM event WHERE kind='slow_request'").fetchall()
+    con.close()
+    # fixture has two >=30s requests: 92398ms (success) and 120001ms (failure)
+    assert len(rows) == 2
+    assert any("92398" in (d or "") for (d,) in rows)
+
+
 def test_collect_attaches_session_id(tmp_tokometer):
     con = _connect(tmp_tokometer)
     ccl.collect(con=con, log_glob=FIXTURE_GLOB)

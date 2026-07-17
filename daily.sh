@@ -57,4 +57,19 @@ else
   echo "[$(date)] report FAILED"
 fi
 
+# 3. Copilot strategy report (locked-down-laptop machines): daily always,
+#    weekly rollup on Mondays. No-ops quietly when the collector is disabled.
+case " ${TOKOMETER_HARNESSES:-} " in
+  *" copilot_chat_log "*)
+    "$PY" "$TOKOMETER_HOME/report_copilot.py" >/dev/null \
+      && echo "[$(date)] copilot daily report ok" \
+      || echo "[$(date)] copilot daily report FAILED"
+    if [ "$(date +%u)" = "1" ]; then
+      "$PY" "$TOKOMETER_HOME/report_copilot.py" --weekly >/dev/null \
+        && echo "[$(date)] copilot weekly report ok" \
+        || echo "[$(date)] copilot weekly report FAILED"
+    fi
+    ;;
+esac
+
 echo "===== done $(date) ====="

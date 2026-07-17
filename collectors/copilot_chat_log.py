@@ -46,6 +46,9 @@ HARNESS = "copilot"
 PROVIDER = "github"
 SOURCE = "vscode-chat-log"
 STATE_KEY = "copilot_chat_log"
+# a request this slow is stall-shaped (the field capture showed a 92s Haiku turn);
+# flagged as an event so the report can list them
+SLOW_REQUEST_MS = int(os.environ.get("COPILOT_SLOW_REQUEST_MS", "30000"))
 
 _APPDATA = os.environ.get("APPDATA") or os.path.expanduser("~/AppData/Roaming")
 DEFAULT_GLOB = os.path.join(
@@ -148,8 +151,10 @@ def _parse_file(path):
     pending = {}       # merged usage fragments awaiting their ccreq line
 
     def event(lineno, ts, kind, detail=None, mechanism=None):
+        # kind is part of the uid: one line may emit two kinds (a failed ccreq
+        # that is also slow), and both must survive the uid dedupe
         event_rows.append({
-            "uid": f"cclog:{base}:{lineno}", "ts": ts, "kind": kind,
+            "uid": f"cclog:{base}:{lineno}:{kind}", "ts": ts, "kind": kind,
             "mechanism": mechanism,
             "detail": json.dumps(detail) if isinstance(detail, dict) else detail,
             "session_id": conversation, "raw_ref": f"{path}:{lineno}",
@@ -195,6 +200,10 @@ def _parse_file(path):
                     event(lineno, ts, "request_failure",
                           {"ccreq": req["ccreq"], "status": req["status"],
                            "latency_ms": req["latency_ms"], "origin": req["origin"]})
+                if req["latency_ms"] >= SLOW_REQUEST_MS:
+                    event(lineno, ts, "slow_request",
+                          {"ccreq": req["ccreq"], "latency_ms": req["latency_ms"],
+                           "origin": req["origin"], "model": req["deployment"] or req["alias"]})
                 pending = {}
                 continue
 
