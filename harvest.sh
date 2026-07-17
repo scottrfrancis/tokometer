@@ -8,11 +8,11 @@ TOKOMETER_HOME="${TOKOMETER_HOME:-$HOME/.tokometer}"
 [ -f "$TOKOMETER_HOME/tokometer.env" ] && . "$TOKOMETER_HOME/tokometer.env"
 PY="$(command -v python3)"
 
-ALL_HARNESSES="opencode droid copilot claude_code git_metrics gh_metrics cursor"
+ALL_HARNESSES="opencode droid copilot copilot_chat_log vscode_events copilot_vscode claude_code git_metrics gh_metrics cursor"
 ENABLED="${TOKOMETER_HARNESSES:-$ALL_HARNESSES}"
 is_enabled() { case " $ENABLED " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
-for h in opencode droid copilot claude_code git_metrics gh_metrics; do
+for h in opencode droid copilot copilot_chat_log vscode_events copilot_vscode claude_code git_metrics gh_metrics; do
   is_enabled "$h" || { echo "[$(date)] $h disabled (skipped)"; continue; }
   "$PY" "$TOKOMETER_HOME/collectors/${h}.py" \
     && echo "[$(date)] $h ok" \
@@ -34,4 +34,12 @@ if is_enabled cursor; then
     || echo "[$(date)] cursor_repos FAILED"
 else
   echo "[$(date)] cursor disabled (skipped)"
+fi
+
+# degradation classifier: label model downgrades from the ledger + events just
+# harvested (copilot-in-vscode machines). Cheap no-op when there's nothing new.
+if is_enabled copilot_chat_log; then
+  "$PY" "$TOKOMETER_HOME/lib/mechanisms.py" \
+    && echo "[$(date)] mechanisms ok" \
+    || echo "[$(date)] mechanisms FAILED"
 fi
