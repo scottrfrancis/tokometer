@@ -48,8 +48,16 @@ def insert_usage(con, rows, on_conflict="ignore"):
     return con.total_changes - before
 
 
+def _state_dir():
+    """Resolve from the CURRENT env — TOKOMETER_HOME may be set after import
+    (tests monkeypatch it; the module-level STATE_DIR keeps the import-time
+    value for callers that still reference it)."""
+    home = os.path.expanduser(os.environ.get("TOKOMETER_HOME", "~/.tokometer"))
+    return os.path.join(home, "state")
+
+
 def load_state(harness):
-    path = os.path.join(STATE_DIR, f"{harness}.json")
+    path = os.path.join(_state_dir(), f"{harness}.json")
     try:
         with open(path) as f:
             return json.load(f)
@@ -58,8 +66,8 @@ def load_state(harness):
 
 
 def save_state(harness, state):
-    os.makedirs(STATE_DIR, exist_ok=True)
-    path = os.path.join(STATE_DIR, f"{harness}.json")
+    os.makedirs(_state_dir(), exist_ok=True)
+    path = os.path.join(_state_dir(), f"{harness}.json")
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(state, f)

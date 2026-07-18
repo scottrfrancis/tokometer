@@ -22,8 +22,9 @@ def tmp_tokometer(tmp_path, monkeypatch):
 
     db = home / "ledger.db"
     con = sqlite3.connect(str(db))
-    con.executescript((Path(__file__).parent.parent / "schema.sql").read_text())
-    con.executescript((Path(__file__).parent.parent / "schema_session_logs.sql").read_text())
+    root = Path(__file__).parent.parent
+    for schema in sorted(root.glob("schema*.sql")):
+        con.executescript(schema.read_text())
     con.commit()
     con.close()
     return home
