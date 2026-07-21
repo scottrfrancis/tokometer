@@ -140,7 +140,10 @@ elif [ -n "${WINDIR:-}" ] || uname -s | grep -qiE 'mingw|msys|cygwin'; then
   # full walkthrough in docs/WINDOWS.md. (We don't auto-register: it needs the user's
   # Git Bash path and a PowerShell call best run/inspected by the operator.)
   echo "Windows detected -- schedule daily.sh once via Task Scheduler (PowerShell):"
-  echo '  $b="C:\Program Files\Git\bin\bash.exe"; $h="/c/Users/'"$USER"'/.tokometer"'
+  # Git Bash on Windows does not export $USER; under `set -u` referencing it
+  # aborted the installer here. Fall back to $USERNAME, then whoami.
+  win_user="${USER:-${USERNAME:-$(whoami 2>/dev/null || echo YOU)}}"
+  echo '  $b="C:\Program Files\Git\bin\bash.exe"; $h="/c/Users/'"$win_user"'/.tokometer"'
   echo '  Register-ScheduledTask -TaskName tokometer-daily -Force \'
   echo '    -Action  (New-ScheduledTaskAction -Execute $b -Argument "-lc `"$h/daily.sh >> $h/daily.log 2>&1`"") \'
   echo '    -Trigger (New-ScheduledTaskTrigger -Daily -At 4:00AM) \'
