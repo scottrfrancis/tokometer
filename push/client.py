@@ -11,12 +11,16 @@ Env:
   FLIGHTPLAN_INGEST_TOKEN  bearer token for this device (write scope)
   TOKOMETER_HOME           default ~/.tokometer
   FLIGHTPLAN_PUSH_BATCH    rows per POST (default 1000)
+  TOKOMETER_HOST           pin the canonical host stamped on rows; defaults
+                           to the short hostname, minus any mDNS "-N" suffix,
+                           lowercased. See _host().
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import sqlite3
 import sys
@@ -116,7 +120,33 @@ COLUMN_REMAPS: dict[str, dict[str, str]] = {
 
 
 def _host() -> str:
-    return socket.gethostname().split(".")[0]
+    """Canonical host identity stamped onto every pushed row.
+
+    Warehouse rows are grouped by this string, so it must be stable and
+    spelled exactly one way per device. Two things can fragment it:
+    casual renaming (one box answering to BladeRunner14 / Razer14 / razer)
+    and OS-dependent casing (Windows reports the NetBIOS name in caps).
+    Both would silently split one device into several in bronze.*.
+
+    So, in order:
+      1. An explicit TOKOMETER_HOST pin wins outright and is used verbatim
+         (bar lowercasing) -- never second-guess the operator.
+      2. Otherwise take the short hostname and drop any trailing "-<digits>",
+         which is the mDNS/Bonjour dedup suffix a Mac invents when it thinks
+         its name is taken. That suffix comes and goes with DHCP leases, so
+         one machine drifts between `studio` and `studio-3` over time.
+         Trailing digits with no hyphen (bladerunner14) are part of the name
+         and are kept.
+      3. Lowercase, because Windows reports the NetBIOS name in caps.
+
+    Note this is deliberately NOT the ingest device/token name -- those are
+    auth identities and are already decoupled upstream.
+    """
+    pinned = os.environ.get("TOKOMETER_HOST", "").strip()
+    if pinned:
+        return pinned.lower()
+    short = socket.gethostname().split(".")[0]
+    return re.sub(r"-\d+$", "", short).lower()
 
 
 # ─── HTTP ────────────────────────────────────────────────────────────────

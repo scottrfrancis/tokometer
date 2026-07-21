@@ -285,3 +285,47 @@ def test_push_kind_no_rows_returns_zero(mock_ingest, tmp_tokometer):
     con.close()
     assert res.attempted == 0
     assert mock_ingest.requests == []
+
+
+# ─── host identity ────────────────────────────────────────────────────────
+
+def test_host_defaults_to_short_hostname(monkeypatch):
+    monkeypatch.delenv("TOKOMETER_HOST", raising=False)
+    monkeypatch.setattr(pc.socket, "gethostname", lambda: "SomeBox.local")
+    assert pc._host() == "somebox"
+
+
+def test_host_env_override_wins(monkeypatch):
+    """Operators pin a canonical host so casual naming variants
+    (BladeRunner14 / Razer14 / razer) can't fragment warehouse rows."""
+    monkeypatch.setattr(pc.socket, "gethostname", lambda: "BladeRunner14")
+    monkeypatch.setenv("TOKOMETER_HOST", "bladerunner14")
+    assert pc._host() == "bladerunner14"
+
+
+def test_host_is_normalised_lowercase(monkeypatch):
+    monkeypatch.delenv("TOKOMETER_HOST", raising=False)
+    monkeypatch.setattr(pc.socket, "gethostname", lambda: "BladeRunner14")
+    assert pc._host() == "bladerunner14"
+
+
+def test_host_strips_mdns_dedup_suffix(monkeypatch):
+    """macOS/Bonjour appends -2/-3 when it thinks the name is taken, which
+    would fragment one Mac across several warehouse hosts (studio/studio-3)."""
+    monkeypatch.delenv("TOKOMETER_HOST", raising=False)
+    monkeypatch.setattr(pc.socket, "gethostname", lambda: "studio-3.local")
+    assert pc._host() == "studio"
+
+
+def test_host_keeps_trailing_digits_without_hyphen(monkeypatch):
+    """bladerunner14's digits are part of the name, not an mDNS suffix."""
+    monkeypatch.delenv("TOKOMETER_HOST", raising=False)
+    monkeypatch.setattr(pc.socket, "gethostname", lambda: "BladeRunner14")
+    assert pc._host() == "bladerunner14"
+
+
+def test_host_env_override_is_not_suffix_stripped(monkeypatch):
+    """An explicit pin is authoritative -- never second-guess the operator."""
+    monkeypatch.delenv("TOKOMETER_HOST", raising=False)
+    monkeypatch.setenv("TOKOMETER_HOST", "rig-3")
+    assert pc._host() == "rig-3"
