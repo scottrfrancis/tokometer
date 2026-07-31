@@ -113,6 +113,14 @@ def extract_usage(payload):
         elif "prompt_tokens" in u or "completion_tokens" in u:  # OpenAI
             out["input_tokens"] = int(u.get("prompt_tokens") or 0)
             out["output_tokens"] = int(u.get("completion_tokens") or 0)
+            # o1/o3-class models routed through Copilot carry these nested
+            # detail blocks; mirror how the Anthropic branch above pulls its
+            # cache fields out of the top-level usage dict. Absent on older/
+            # simpler payloads, so default to 0 rather than KeyError.
+            comp_details = u.get("completion_tokens_details") or {}
+            out["reasoning_tokens"] = int(comp_details.get("reasoning_tokens") or 0)
+            prompt_details = u.get("prompt_tokens_details") or {}
+            out["cache_read_tokens"] = int(prompt_details.get("cached_tokens") or 0)
     bmetrics = d.get("amazon-bedrock-invocationMetrics")
     if isinstance(bmetrics, dict):
         out.setdefault("input_tokens", int(bmetrics.get("inputTokenCount") or 0))
@@ -191,6 +199,7 @@ def _parse_file(path):
                     "output_tokens": pending.get("output_tokens", 0),
                     "cache_read_tokens": pending.get("cache_read_tokens", 0),
                     "cache_write_tokens": pending.get("cache_write_tokens", 0),
+                    "reasoning_tokens": pending.get("reasoning_tokens", 0),
                     "credits": pending.get("nano_aiu", 0),
                     "source": SOURCE,
                     "confidence": "exact" if has_tokens else "estimate",

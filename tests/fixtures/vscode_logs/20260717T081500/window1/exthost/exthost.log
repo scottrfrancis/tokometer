@@ -1,0 +1,4 @@
+2026-07-17 08:40:12.001 [error] Worker terminated due to reaching memory limit: JS heap out of memory
+2026-07-17 08:40:12.500 [info] Extension host (LocalProcess pid: 12345) terminated unexpectedly. Code: 133
+2026-07-17 08:40:13.000 [info] Automatically restarting the extension host
+2026-07-17 08:41:00.123 [warning] potential listener LEAK detected, having 200 listeners already

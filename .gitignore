@@ -19,6 +19,9 @@ cursor-exports/
 
 # logs
 *.log
+# ...except test fixtures: synthetic *.log files the test suite reads back
+# (e.g. tests/fixtures/vscode_logs*/**/*.log) must stay tracked
+!tests/fixtures/**/*.log
 
 # local session logs (cross-tool dev records; not part of the distributed tool)
 session-logs/

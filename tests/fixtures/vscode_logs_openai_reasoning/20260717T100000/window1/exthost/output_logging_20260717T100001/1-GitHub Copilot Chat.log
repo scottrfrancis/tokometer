@@ -1,0 +1,5 @@
+2026-07-17 10:00:00.001 [debug] [ChatWebSocketManager] New request for conversation 1a2b3c4d-0000-4000-8000-000000000001 turn request_00000000-0000-4000-8000-000000000001
+2026-07-17 10:00:00.100 [debug] chat model o3-mini
+2026-07-17 10:00:00.300 [trace] Sending prompt to model
+2026-07-17 10:00:05.084 [trace] choice: {"usage":{"prompt_tokens":500,"completion_tokens":120,"total_tokens":620,"completion_tokens_details":{"reasoning_tokens":64},"prompt_tokens_details":{"cached_tokens":200}}}
+2026-07-17 10:00:05.500 [info] ccreq:aabbccdd.copilotmd | success | o3-mini | 5200ms | [panel/editAgent]
