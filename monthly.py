@@ -71,7 +71,19 @@ def completed_months_with_data(con, current_label):
 
 
 def archive_and_prune(cutoff_iso):
-    """Dump rows older than cutoff to a .sql file, then delete them."""
+    """Dump rows older than cutoff to a .sql file, then delete them.
+
+    The archive snapshot (CREATE TABLE arch.tbl AS SELECT ... WHERE pred) and
+    the prune (DELETE FROM tbl WHERE pred) run inside a single BEGIN
+    IMMEDIATE transaction on one connection, rather than as two separate
+    connections/transactions. SQLite grants only one writer lock at a time;
+    BEGIN IMMEDIATE acquires it before the snapshot query runs and holds it
+    through the DELETE, so no concurrently-running collector can insert a
+    cutoff-matching row in the window between snapshot and delete -- there is
+    no window for one to land in. Every row the DELETE removes was therefore
+    necessarily counted and copied into the archive table above, since both
+    statements observe the same locked database state.
+    """
     os.makedirs(ARCHIVE_DIR, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y%m%dT%H%M%S")
     arch_db = os.path.join(ARCHIVE_DIR, f".tmp-{stamp}.db")
@@ -80,18 +92,33 @@ def archive_and_prune(cutoff_iso):
     con = sqlite3.connect(DB)
     con.execute("PRAGMA busy_timeout = 30000;")
     con.execute("ATTACH ? AS arch", (arch_db,))
+    con.execute("BEGIN IMMEDIATE")
     moved = 0
-    for tbl, col in PRUNE_TABLES:
-        pred = f"date({col},'localtime') < ?"
-        n = con.execute(f"SELECT COUNT(*) FROM {tbl} WHERE {pred}", (cutoff_iso,)).fetchone()[0]
-        if n:
-            con.execute(f"CREATE TABLE arch.{tbl} AS SELECT * FROM {tbl} WHERE {pred}",
-                        (cutoff_iso,))
-            moved += n
-    con.commit()
+    try:
+        for tbl, col in PRUNE_TABLES:
+            pred = f"date({col},'localtime') < ?"
+            n = con.execute(f"SELECT COUNT(*) FROM {tbl} WHERE {pred}", (cutoff_iso,)).fetchone()[0]
+            if n:
+                con.execute(f"CREATE TABLE arch.{tbl} AS SELECT * FROM {tbl} WHERE {pred}",
+                            (cutoff_iso,))
+                moved += n
+        if moved:
+            # Re-running the same predicate here is NOT a re-check that can
+            # race: this DELETE executes under the writer lock BEGIN
+            # IMMEDIATE took above, so the table state is identical to what
+            # the snapshot just read -- no other connection could have
+            # written in between.
+            for tbl, col in PRUNE_TABLES:
+                con.execute(f"DELETE FROM {tbl} WHERE date({col},'localtime') < ?", (cutoff_iso,))
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
     con.execute("DETACH arch")
     con.close()
 
+    # cursor_repo_hour is a derived/cache table with no archive, so its
+    # delete stays a separate, simpler step -- there's nothing to lose here.
     # cursor_repo_hour buckets are 'YYYY-MM-DDTHH' local strings -> lexical compare
     con = sqlite3.connect(DB)
     con.execute("PRAGMA busy_timeout = 30000;")
@@ -107,9 +134,6 @@ def archive_and_prune(cutoff_iso):
         a.close()
         con = sqlite3.connect(DB)
         con.execute("PRAGMA busy_timeout = 30000;")
-        for tbl, col in PRUNE_TABLES:
-            con.execute(f"DELETE FROM {tbl} WHERE date({col},'localtime') < ?", (cutoff_iso,))
-        con.commit()
         con.execute("VACUUM")
         con.close()
         print(f"[monthly] archived {moved} rows -> {sql_path}, pruned & vacuumed", file=sys.stderr)
