@@ -1,0 +1,45 @@
+2026-07-17 08:16:55.001 [debug] [ChatWebSocketManager] New request for conversation 8eee8653-a088-4388-bfd3-0c62ecaaf167 turn request_f99a0e6f-d339-4008-af6f-476266866470
+2026-07-17 08:16:55.100 [trace] Resolving chat model
+2026-07-17 08:16:55.101 [debug] chat model claude-haiku-4.5
+2026-07-17 08:16:55.102 [debug] modelMaxPromptTokens 135997
+2026-07-17 08:16:55.103 [debug] modelMaxResponseTokens 64000
+2026-07-17 08:16:55.110 [debug] [Agent] rendering with budget=118668 (baseBudget: 135997, toolTokens: 4143, totalTools: 23, toolSearchEnabled: false), summarization enabled
+2026-07-17 08:16:55.200 [debug] [PowerService] Acquired power save blocker, active count: 1
+2026-07-17 08:16:55.300 [trace] Sending prompt to model
+2026-07-17 08:17:12.084 [trace] [messagesAPI]SSE: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+2026-07-17 08:17:12.085 [trace] [messagesAPI]SSE: {"delta":{"thinking":"planning the edit","type":"thinking_delta"},"index":0,"type":"content_block_delta"}
+2026-07-17 08:17:13.086 [trace] [messagesAPI]SSE: {"index":0,"type":"content_block_stop"}
+2026-07-17 08:17:13.087 [trace] [messagesAPI]SSE: {"content_block":{"text":"","type":"text"},"index":1,"type":"content_block_start"}
+2026-07-17 08:17:13.088 [trace] [messagesAPI]SSE: {"delta":{"text":"done","type":"text_delta"},"index":1,"type":"content_block_delta"}
+2026-07-17 08:17:17.089 [trace] [messagesAPI]SSE: {"index":1,"type":"content_block_stop"}
+2026-07-17 08:17:18.090 [trace] [messagesAPI]SSE: {"copilot_usage":{"token_details":[{"batch_size":1000000000,"cost_per_batch":100000000000,"token_count":13,"token_type":"input"},{"batch_size":1000000000,"cost_per_batch":125000000000,"token_count":178,"token_type":"output"}],"total_nano_aiu":852380000},"delta":{"stop_reason":"end_turn","stop_sequence":null},"type":"message_delta","usage":{"cache_creation_input_tokens":4384,"cache_read_input_tokens":21408,"input_tokens":13,"output_tokens":178}}
+2026-07-17 08:17:18.091 [trace] [messagesAPI]SSE: {"amazon-bedrock-invocationMetrics":{"cacheReadInputTokenCount":21408,"cacheWriteInputTokenCount":4384,"inputTokenCount":13,"invocationLatency":2714,"outputTokenCount":178},"type":"message_stop"}
+2026-07-17 08:17:18.091 [info] [messagesAPI] message 0 returned. finish reason: [stop]
+2026-07-17 08:17:18.103 [trace] [messagesAPI]SSE: [DONE]
+2026-07-17 08:17:18.103 [info] ccreq:478c2085.copilotmd | success | claude-haiku-4.5 -> claude-haiku-4-5-20251001 | 3398ms | [tool/runSubagent-Explore]
+2026-07-17 08:17:18.235 [debug] [PowerService] Released power save blocker, active count: 0
+2026-07-17 08:17:18.236 [trace] [ChatQuota] processQuotaHeaders: {"quota":-1,"unlimited":true,"hasQuota":true,"percentRemaining":100,"additionalUsageUsed":0,"resetDate":"2026-08-01T00:00:00.000Z"}
+2026-07-17 08:17:24.834 [debug] [Power] CPU speed limit changed: 27% (throttled)
+2026-07-17 08:17:28.886 [debug] [Power] CPU speed limit changed: 26% (throttled)
+2026-07-17 08:18:50.635 [info] ccreq:5f8a7005.copilotmd | success | claude-haiku-4.5 -> claude-haiku-4-5-20251001 | 92398ms | [tool/runSubagent-Explore]
+2026-07-17 08:18:50.640 [info] [ToolCallingLoop] Subagent stop hook result: shouldcontinue=false, reasons=undefined
+2026-07-17 08:18:51.002 [debug] [ToolResult] Large tool result (30420 bytes) written to disk: C:\Users\user\AppData\Roaming\Code\User\workspaceStorage\a1b2c3\GitHub.copilot-chat\chat-session-resources\call_example
+2026-07-17 08:18:51.026 [trace] Resolving chat model
+2026-07-17 08:18:51.027 [debug] modelMaxPromptTokens 271997
+2026-07-17 08:18:51.027 [debug] modelMaxResponseTokens 2048
+2026-07-17 08:18:51.028 [debug] chat model gpt-5.3-codex
+2026-07-17 08:18:58.523 [trace] choice: {"delta":{"content":"Reviewed","role":"assistant"}}
+2026-07-17 08:18:58.524 [trace] choice: {"finish_reason":"stop","delta":{"content":null}}
+2026-07-17 08:18:58.526 [info] message 0 returned. finish reason: [stop]
+2026-07-17 08:18:58.527 [info] request done: requestId: [d1dc0c80-ca57-49df-879f-109a5269a613] model deployment ID: []
+2026-07-17 08:18:58.851 [info] ccreq:59a9e1b9.copilotmd | success | gpt-5.3-codex | 2974ms | [panel/editAgent]
+2026-07-17 08:18:58.857 [debug] request.response: [websocket], took 2966 ms
+2026-07-17 08:18:58.869 [trace] [AutomaticInstructionsCollector] No applyTo pattern: file:///c%3A/Users/user/workspace/proj/.github/instructions/pdf-ingest.instructions.md. Skipping referenced instructions.
+2026-07-17 08:18:58.870 [trace] [AutomaticInstructionsCollector] includeReferencedInstructions is disabled. Skipping referenced instructions.
+2026-07-17 08:18:58.886 [info] [AutomaticInstructionsCollector] Core vs extension instructions match (3 entries)
+2026-07-17 08:18:58.982 [trace] Resolving chat model
+2026-07-17 08:18:58.989 [debug] chat model gpt-4o-mini-2024-07-18
+2026-07-17 08:18:59.310 [info] ccreq:3814725e.copilotmd | success | gpt-4o-mini-2024-07-18 | 984ms | [copilotLanguageModelWrapper]
+2026-07-17 08:18:59.320 [trace] [LanguageModelAccess] Publishing alias 'copilot-utility-small' -> gpt-4o-mini-2024-07-18 (synthesized, copilot). Publishing alias 'copilot-utility' -> gpt-5.3-codex (cloned, copilot).
+2026-07-17 08:18:59.825 [error] Fetch failed: rate limit exceeded, please try again later
+2026-07-17 08:18:59.830 [info] ccreq:9a0b1c2d.copilotmd | failure | claude-haiku-4.5 -> claude-haiku-4-5-20251001 | 120001ms | [panel/editAgent]

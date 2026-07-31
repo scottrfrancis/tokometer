@@ -86,8 +86,49 @@ def test_extract_usage_openai_style():
     assert u["output_tokens"] == 40
 
 
+def test_extract_usage_openai_style_reasoning_and_cache_tokens():
+    # o1/o3-class models routed through Copilot carry these nested detail
+    # blocks; both must be captured, not silently dropped (bug: only
+    # prompt_tokens/completion_tokens were read).
+    line = ('{"usage":{"prompt_tokens":500,"completion_tokens":120,"total_tokens":620,'
+            '"completion_tokens_details":{"reasoning_tokens":64},'
+            '"prompt_tokens_details":{"cached_tokens":200}}}')
+    u = ccl.extract_usage(line)
+    assert u["input_tokens"] == 500
+    assert u["output_tokens"] == 120
+    assert u["reasoning_tokens"] == 64
+    assert u["cache_read_tokens"] == 200
+
+
+def test_extract_usage_openai_style_missing_detail_blocks_defaults_to_zero():
+    # older/simpler OpenAI-style payloads (no *_details) must not crash and
+    # must default the new fields to 0.
+    line = ('{"usage":{"prompt_tokens":900,"completion_tokens":40,"total_tokens":940}}')
+    u = ccl.extract_usage(line)
+    assert u["reasoning_tokens"] == 0
+    assert u["cache_read_tokens"] == 0
+
+
 def test_extract_usage_none_for_deltas():
     assert ccl.extract_usage('{"delta":{"text":"hi"},"type":"content_block_delta"}') is None
+
+
+# ---------- OpenAI reasoning/cache tokens, end-to-end through collect() ----------
+
+OPENAI_REASONING_FIXTURE_GLOB = str(
+    Path(__file__).parent / "fixtures" / "vscode_logs_openai_reasoning" / "*" / "window*" /
+    "exthost" / "output_logging_*" / "*GitHub Copilot Chat*.log"
+)
+
+
+def test_collect_maps_openai_reasoning_and_cache_tokens_into_ledger(tmp_tokometer):
+    con = _connect(tmp_tokometer)
+    ccl.collect(con=con, log_glob=OPENAI_REASONING_FIXTURE_GLOB)
+    row = con.execute(
+        "SELECT model, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens,"
+        " confidence FROM usage WHERE uid='copilot-vscode:aabbccdd'").fetchone()
+    con.close()
+    assert row == ("o3-mini", 500, 120, 64, 200, "exact")
 
 
 # ---------- file-level collect ----------

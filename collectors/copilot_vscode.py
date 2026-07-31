@@ -17,6 +17,7 @@ import os
 import sys
 import json
 import glob
+import datetime as dt
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from lib import ledger  # noqa: E402
@@ -24,7 +25,11 @@ from lib import ledger  # noqa: E402
 HARNESS = "copilot"
 PROVIDER = "github"
 SOURCE = "otel-file"
+CHAT_LOG_SOURCE = "vscode-chat-log"
 STATE_KEY = "copilot_otel"
+# window within which an OTel row and a Trace-log row are treated as the same
+# underlying request (see _duplicate_of_chat_log below)
+DEDUP_TOLERANCE_S = 2
 
 
 def _attr(d, *keys):
@@ -35,6 +40,53 @@ def _attr(d, *keys):
         if k in d:
             return d[k]
     return None
+
+
+def _duplicate_of_chat_log(con, row, tolerance_s=DEDUP_TOLERANCE_S):
+    """Best-effort cross-source dedup guard.
+
+    copilot_chat_log.py (source='vscode-chat-log') and this collector
+    (source='otel-file') are independent, uid-disjoint readers of
+    potentially the SAME underlying Copilot Chat request: the Trace-log uid
+    is built from a `ccreq:<hex>` request id burned into the chat output
+    channel, this collector's uid is `{file}:{lineno}` from the OTel export
+    — neither format appears in the other source's raw data.
+
+    The only field the two parsers share is a *conversation*-level id (the
+    Trace-log's "New request for conversation <uuid>" vs. OTel's
+    `gen_ai.conversation.id`) — but a conversation can span many individual
+    requests, so it can't disambiguate which request within it a given OTel
+    row refers to. There is no genuine per-request shared identifier.
+
+    Absent a real shared key, fall back to a heuristic: an OTel row is
+    treated as a duplicate if a chat-log row already in the ledger has the
+    same model and token counts within a small time window. This can
+    produce false positives (two distinct requests that coincidentally
+    match) and false negatives (the same request whose fields drifted more
+    than the tolerance) — but a false negative just means an occasional
+    double-count, while a false positive means silently dropping a real
+    request. Since the double-count is the worse, already-flagged failure
+    mode this guard exists to prevent, on any doubt we skip the insert
+    (favor under-count over double-count).
+    """
+    try:
+        target = dt.datetime.fromisoformat(row["ts"].replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return False
+    cur = con.execute(
+        "SELECT ts FROM usage WHERE harness=? AND source=? AND model=?"
+        " AND input_tokens=? AND output_tokens=?",
+        (HARNESS, CHAT_LOG_SOURCE, row.get("model"),
+         row.get("input_tokens", 0), row.get("output_tokens", 0)),
+    )
+    for (ts,) in cur.fetchall():
+        try:
+            candidate = dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if abs((candidate - target).total_seconds()) <= tolerance_s:
+            return True
+    return False
 
 
 def collect(con, otel_dir=None, dry_run=False):
@@ -79,6 +131,11 @@ def collect(con, otel_dir=None, dry_run=False):
                     "source": SOURCE, "confidence": "estimate",
                     "raw_ref": f"{fp}:{lineno}",
                 })
+    if rows:
+        # cross-source dedup guard: drop rows that look like a request the
+        # Trace-log collector (copilot_chat_log.py) already recorded — see
+        # _duplicate_of_chat_log for why this is heuristic, not exact.
+        rows = [r for r in rows if not _duplicate_of_chat_log(con, r)]
     if rows and not dry_run:
         result["inserted"] = ledger.insert_usage(con, rows)
     return result
