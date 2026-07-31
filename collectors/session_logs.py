@@ -4,9 +4,15 @@ Lands rows in tokometer's session_log_raw table (additive migration in
 schema_session_logs.sql). The Beaufort REST push client then ships rows
 to flightplan's bronze.session_log via POST /ingest/session-logs.
 
-Idempotent: a file is only re-ingested if its (rel_filepath, raw_md_sha256)
-pair changes — i.e. content edits produce a new uid + new row, but a
-repeated scan of the same content is a no-op.
+Idempotent: the dedup key (uid) is derived from the file's CONTENT hash
+(raw_md_sha256), not its path — a content edit changes the hash and
+produces a new uid + new row, but a repeated scan of unchanged content is
+a no-op. This is deliberate: the same session log can legitimately live
+under two path conventions at once (<repo>/session-logs/ current vs.
+<repo>/.claude/session-logs/ legacy fallback, per the cross-tool session
+protocol) during/after a migration, and a path-derived uid would double-
+count that file. rel_filepath/abs_filepath are still recorded per row for
+audit purposes — only the dedup key changed, not what's tracked.
 """
 
 from __future__ import annotations
@@ -76,9 +82,20 @@ def _classify_filename(fn: str) -> dict | None:
     }
 
 
-def _uid(host: str, rel_filepath: str, mtime_ns: int) -> str:
-    sha = hashlib.sha256(rel_filepath.encode("utf-8")).hexdigest()[:8]
-    return f"sl-{host}-{sha}-{mtime_ns}"
+def _uid(host: str, content_sha256: str) -> str:
+    """Dedup key derived from the file's content hash, not its path.
+
+    Path-based uids double-count a session log that legitimately exists
+    under both the current (<repo>/session-logs/) and legacy
+    (<repo>/.claude/session-logs/) conventions, since the two paths hash
+    differently even though the bytes are identical. Hashing content
+    instead means the same file found under either path collapses to one
+    uid, and INSERT OR IGNORE naturally dedupes it. content_sha256 is the
+    full-file sha256 already computed by _read_md() for raw_md_sha256, so
+    this adds no extra file-read overhead; session logs are markdown and
+    small, so hashing the full content per scan is cheap regardless.
+    """
+    return f"sl-{host}-{content_sha256[:16]}"
 
 
 def _read_md(path: Path) -> tuple[str, str]:
@@ -187,9 +204,8 @@ def collect(
             raw_md, sha = _read_md(abs_path)
             rel = _rel_filepath(abs_path, scope, source_project, home)
             stat = abs_path.stat()
-            mtime_ns = stat.st_mtime_ns
             mtime_iso = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
-            uid = _uid(host, rel, mtime_ns)
+            uid = _uid(host, sha)
 
             cur.execute(
                 """
