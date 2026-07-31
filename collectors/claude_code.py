@@ -29,6 +29,23 @@ cache_read_input_tokens, cache_creation_input_tokens}; one ledger row per messag
 `<synthetic>`/empty turns are dropped by the zero-token guard. cost_usd stays 0
 (flat-rate seats; not metered).
 
+Some assistant lines carry a nested message.usage.iterations array -- multiple
+billed API attempts folded under one transcript line (e.g. an overload retry:
+a "message" attempt followed by a "fallback_message" attempt). The top-level
+usage fields mirror only the LAST iteration, so when iterations is present we
+sum input/output/cache tokens across all of them instead of trusting the
+top-level fields.
+
+Subagents (the "Agent" tool) never get their own transcript lines -- isSidechain
+is always false on this machine, so a delegated subagent's turns are invisible
+to the type=="assistant" scan above. When a subagent finishes, a type=="user"
+line appears carrying a top-level toolUseResult block with an AGGREGATE usage
+summary for the whole subagent run (status=="completed", plus agentId/
+resolvedModel/usage). We harvest one additional row per such block, keyed by
+agentId, with source="agent-aggregate" so it's distinguishable from per-message
+rows. Async launches (status=="async_launched", no usage yet) are skipped --
+nothing in current transcript data ties them to their eventual completion line.
+
 Each run also reconciles: any already-stored row whose session has since become
 attributable is back-filled, so attribution is correct even if a prompt's history
 entry lands after the message was first harvested.
@@ -56,6 +73,29 @@ def _load_json(path):
             return json.load(f)
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def _usage_tokens(u):
+    """(input, output, cache_read, cache_write) from a message.usage dict.
+
+    When usage.iterations is present (multiple billed API attempts folded
+    under one transcript line, e.g. an overload fallback retry), the
+    top-level fields only mirror the LAST iteration -- sum across all
+    iterations instead so earlier attempts' tokens aren't lost.
+    """
+    iterations = u.get("iterations")
+    if iterations:
+        inp = sum(int(it.get("input_tokens") or 0) for it in iterations)
+        out = sum(int(it.get("output_tokens") or 0) for it in iterations)
+        cr = sum(int(it.get("cache_read_input_tokens") or 0) for it in iterations)
+        cw = sum(int(it.get("cache_creation_input_tokens") or 0) for it in iterations)
+        return inp, out, cr, cw
+    return (
+        int(u.get("input_tokens") or 0),
+        int(u.get("output_tokens") or 0),
+        int(u.get("cache_read_input_tokens") or 0),
+        int(u.get("cache_creation_input_tokens") or 0),
+    )
 
 
 def config_roots():
@@ -173,51 +213,90 @@ def harvest():
             with fh:
                 for line in fh:
                     line = line.strip()
-                    if not line or '"assistant"' not in line:
+                    if not line or ('"assistant"' not in line and '"toolUseResult"' not in line):
                         continue
                     try:
                         o = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    if o.get("type") != "assistant":
-                        continue
-                    u = (o.get("message") or {}).get("usage") or {}
-                    inp = int(u.get("input_tokens") or 0)
-                    out = int(u.get("output_tokens") or 0)
-                    cr = int(u.get("cache_read_input_tokens") or 0)
-                    cw = int(u.get("cache_creation_input_tokens") or 0)
-                    if inp + out + cr + cw == 0:
-                        continue  # synthetic / empty turns
-                    ts = ledger.normalize_iso(o.get("timestamp"))
-                    if ledger.older_than_retention(ts):
-                        continue
-                    sid = o.get("sessionId")
-                    account, subscription, org = sess.get(sid, (None, None, None))
-                    uid = o.get("uuid") or f"{sid}:{o.get('requestId')}"
-                    read += 1
-                    rows.append({
-                        "uid": f"{HARNESS}:{uid}",
-                        "ts": ts,
-                        "harness": HARNESS,
-                        "provider": PROVIDER,
-                        "model": (o.get("message") or {}).get("model"),
-                        "session_id": sid,
-                        "request_id": o.get("requestId"),
-                        "input_tokens": inp,
-                        "output_tokens": out,
-                        "cache_read_tokens": cr,
-                        "cache_write_tokens": cw,
-                        "reasoning_tokens": 0,
-                        "credits": 0,
-                        "cost_usd": 0.0,
-                        "source": "session-file",
-                        "confidence": "exact",
-                        "raw_ref": f"{path}#{uid}",
-                        "cwd": o.get("cwd"),
-                        "account": account,
-                        "subscription": subscription,
-                        "org": org,
-                    })
+                    otype = o.get("type")
+
+                    if otype == "assistant":
+                        u = (o.get("message") or {}).get("usage") or {}
+                        inp, out, cr, cw = _usage_tokens(u)
+                        if inp + out + cr + cw == 0:
+                            continue  # synthetic / empty turns
+                        ts = ledger.normalize_iso(o.get("timestamp"))
+                        if ledger.older_than_retention(ts):
+                            continue
+                        sid = o.get("sessionId")
+                        account, subscription, org = sess.get(sid, (None, None, None))
+                        uid = o.get("uuid") or f"{sid}:{o.get('requestId')}"
+                        read += 1
+                        rows.append({
+                            "uid": f"{HARNESS}:{uid}",
+                            "ts": ts,
+                            "harness": HARNESS,
+                            "provider": PROVIDER,
+                            "model": (o.get("message") or {}).get("model"),
+                            "session_id": sid,
+                            "request_id": o.get("requestId"),
+                            "input_tokens": inp,
+                            "output_tokens": out,
+                            "cache_read_tokens": cr,
+                            "cache_write_tokens": cw,
+                            "reasoning_tokens": 0,
+                            "credits": 0,
+                            "cost_usd": 0.0,
+                            "source": "session-file",
+                            "confidence": "exact",
+                            "raw_ref": f"{path}#{uid}",
+                            "cwd": o.get("cwd"),
+                            "account": account,
+                            "subscription": subscription,
+                            "org": org,
+                        })
+
+                    elif otype == "user":
+                        tur = o.get("toolUseResult")
+                        if not isinstance(tur, dict) or tur.get("status") != "completed":
+                            continue  # e.g. async_launched -- no usage yet, nothing to tie it to
+                        au = tur.get("usage")
+                        agent_id = tur.get("agentId")
+                        if not isinstance(au, dict) or not agent_id:
+                            continue
+                        inp, out, cr, cw = _usage_tokens(au)
+                        if inp + out + cr + cw == 0:
+                            continue
+                        ts = ledger.normalize_iso(o.get("timestamp"))
+                        if ledger.older_than_retention(ts):
+                            continue
+                        sid = o.get("sessionId")
+                        account, subscription, org = sess.get(sid, (None, None, None))
+                        read += 1
+                        rows.append({
+                            "uid": f"{HARNESS}:agent:{agent_id}",
+                            "ts": ts,
+                            "harness": HARNESS,
+                            "provider": PROVIDER,
+                            "model": tur.get("resolvedModel"),
+                            "session_id": sid,
+                            "request_id": None,
+                            "input_tokens": inp,
+                            "output_tokens": out,
+                            "cache_read_tokens": cr,
+                            "cache_write_tokens": cw,
+                            "reasoning_tokens": 0,
+                            "credits": 0,
+                            "cost_usd": 0.0,
+                            "source": "agent-aggregate",
+                            "confidence": "exact",
+                            "raw_ref": f"{path}#{agent_id}",
+                            "cwd": o.get("cwd"),
+                            "account": account,
+                            "subscription": subscription,
+                            "org": org,
+                        })
 
     con = ledger.connect()
     inserted = ledger.insert_usage(con, rows)
