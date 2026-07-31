@@ -72,7 +72,9 @@ def harvest():
         try:
             with open(path) as f:
                 s = json.load(f)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"[{HARNESS}] skipping unreadable session file {path}: {e}",
+                  file=sys.stderr)
             continue
         tok = s.get("tokenUsage") or {}
         if not tok:

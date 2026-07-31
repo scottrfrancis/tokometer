@@ -48,7 +48,7 @@ def harvest():
     oc.execute("PRAGMA busy_timeout = 30000;")
     cur = oc.execute(
         "SELECT id, session_id, time_created, data FROM message "
-        "WHERE time_created > ? ORDER BY time_created",
+        "WHERE time_created >= ? ORDER BY time_created",
         (last,),
     )
 
@@ -65,9 +65,12 @@ def harvest():
         tok = d.get("tokens") or {}
         cache = tok.get("cache") or {}
         created = (d.get("time") or {}).get("created") or tcreated
+        ts = ledger.iso_utc(epoch_ms=created)
+        if ledger.older_than_retention(ts):
+            continue   # defense in depth; the watermark is the primary guard
         rows.append({
             "uid": f"{HARNESS}:{mid}",
-            "ts": ledger.iso_utc(epoch_ms=created),
+            "ts": ts,
             "harness": HARNESS,
             "provider": d.get("providerID"),
             "model": d.get("modelID"),
