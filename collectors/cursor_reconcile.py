@@ -41,16 +41,21 @@ def self_tally(con):
     launches = con.execute(
         "SELECT id, ts, model FROM launch WHERE harness IN ('cursor','cursor-agent')"
     ).fetchall()
-    rows = [{
-        "uid": f"{HARNESS}:launch:{lid}",
-        "ts": ledger.normalize_iso(ts),
-        "harness": HARNESS, "provider": PROVIDER, "model": model,
-        "session_id": None, "request_id": None,
-        "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
-        "cache_write_tokens": 0, "reasoning_tokens": 0, "credits": 0,
-        "cost_usd": 0.0, "source": "self-tally", "confidence": "estimate",
-        "raw_ref": f"launch:{lid}",
-    } for lid, ts, model in launches]
+    rows = []
+    for lid, ts, model in launches:
+        norm_ts = ledger.normalize_iso(ts)
+        if ledger.older_than_retention(norm_ts):
+            continue   # pruned by monthly rollover; don't resurrect it
+        rows.append({
+            "uid": f"{HARNESS}:launch:{lid}",
+            "ts": norm_ts,
+            "harness": HARNESS, "provider": PROVIDER, "model": model,
+            "session_id": None, "request_id": None,
+            "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
+            "cache_write_tokens": 0, "reasoning_tokens": 0, "credits": 0,
+            "cost_usd": 0.0, "source": "self-tally", "confidence": "estimate",
+            "raw_ref": f"launch:{lid}",
+        })
     return ledger.insert_usage(con, rows)  # ignore-on-conflict; never clobbers exact
 
 
@@ -65,24 +70,41 @@ def _events_from(doc):
     return []
 
 
-def ingest_exports(con):
+def _mark_processed(path, processed_dir):
+    """Move an ingested export file out of the export dir so the next run's glob
+    doesn't re-parse it -- otherwise every run would re-glob every export ever
+    dropped in EXPORT_DIR and (absent the retention check above) resurrect rows
+    monthly.py has already pruned from `usage`."""
+    os.makedirs(processed_dir, exist_ok=True)
+    dest = os.path.join(processed_dir, os.path.basename(path))
+    if os.path.exists(dest):
+        # don't clobber a same-named file already sitting in processed/
+        base, ext = os.path.splitext(os.path.basename(path))
+        stamp = ledger.iso_utc().replace(":", "").replace("-", "")
+        dest = os.path.join(processed_dir, f"{base}.{stamp}{ext}")
+    os.replace(path, dest)
+
+
+def ingest_exports(con, export_dir=None):
+    export_dir = export_dir or EXPORT_DIR
+    processed_dir = os.path.join(export_dir, "processed")
     inserted = 0
     # CSV exports from the dashboard's "Export" button
-    for path in sorted(glob.glob(os.path.join(EXPORT_DIR, "*.csv"))):
-        inserted += _ingest_csv(con, path)
+    for path in sorted(glob.glob(os.path.join(export_dir, "*.csv"))):
+        inserted += _ingest_csv(con, path, processed_dir)
 
     # JSON exports (Network-tab capture) and manual overrides
-    for path in sorted(glob.glob(os.path.join(EXPORT_DIR, "*.json"))):
+    for path in sorted(glob.glob(os.path.join(export_dir, "*.json"))):
         base = os.path.basename(path)
         try:
             with open(path) as f:
                 doc = json.load(f)
         except (OSError, json.JSONDecodeError):
             print(f"[{HARNESS}] could not parse {base}; skipping", file=sys.stderr)
-            continue
+            continue  # leave in place; a corrected re-export can be dropped in later
 
         if base.startswith("manual-"):
-            inserted += _ingest_manual(con, path, doc)
+            inserted += _ingest_manual(con, path, doc, processed_dir)
             continue
 
         rows = []
@@ -97,17 +119,26 @@ def ingest_exports(con):
                 ts = ledger.iso_utc(epoch_ms=ts_ms)
             except (TypeError, ValueError):
                 ts = ledger.normalize_iso(str(ts_raw)) if ts_raw else ledger.iso_utc()
+            if ledger.older_than_retention(ts):
+                continue   # pruned by monthly rollover; don't resurrect it
             charged = ev.get("chargedCents")
             cents = charged if charged is not None else tok.get("totalCents", 0)
             i = int(tok.get("inputTokens") or 0)
             o = int(tok.get("outputTokens") or 0)
             cr = int(tok.get("cacheReadTokens") or 0)
             cw = int(tok.get("cacheWriteTokens") or 0)
+            request_id = ev.get("requestId")
+            if request_id:
+                uid = f"{HARNESS}:evt:{request_id}"
+            else:
+                # best-effort fallback for exports missing requestId: can still
+                # collide if two distinct events share ts+model+token-counts.
+                uid = f"{HARNESS}:evt:{ts_raw}:{ev.get('model')}:{i}:{o}"
             rows.append({
-                "uid": f"{HARNESS}:evt:{ts_raw}:{ev.get('model')}:{i}:{o}",
+                "uid": uid,
                 "ts": ts, "harness": HARNESS, "provider": PROVIDER,
                 "model": ev.get("model"),
-                "session_id": None, "request_id": ev.get("requestId"),
+                "session_id": None, "request_id": request_id,
                 "input_tokens": i, "output_tokens": o,
                 "cache_read_tokens": cr, "cache_write_tokens": cw,
                 "reasoning_tokens": 0, "credits": 0,
@@ -120,6 +151,7 @@ def ingest_exports(con):
             _supersede_self_tally(con, rows)
             inserted += n
             print(f"[{HARNESS}] {base}: {len(rows)} events, {n} written", file=sys.stderr)
+        _mark_processed(path, processed_dir)
     return inserted
 
 
@@ -130,7 +162,7 @@ def _int(v):
         return 0
 
 
-def _ingest_csv(con, path):
+def _ingest_csv(con, path, processed_dir):
     """Parse the dashboard 'Export' CSV (team-usage-events-*.csv).
 
     Columns: Date, User, Cloud Agent ID, Automation ID, Kind, Model, Max Mode,
@@ -147,6 +179,9 @@ def _ingest_csv(con, path):
                 if EMAIL and email and email.lower() != EMAIL.lower():
                     continue
                 date = (r.get("Date") or "").strip()
+                ts = ledger.normalize_iso(date)
+                if ledger.older_than_retention(ts):
+                    continue   # pruned by monthly rollover; don't resurrect it
                 model = (r.get("Model") or "").strip() or None
                 i = _int(r.get("Input (w/o Cache Write)"))
                 cw = _int(r.get("Input (w/ Cache Write)"))
@@ -157,12 +192,22 @@ def _ingest_csv(con, path):
                     cost = float(cost)
                 except (TypeError, ValueError):
                     cost = 0.0
+                agent_id = (r.get("Cloud Agent ID") or "").strip() or None
+                automation_id = (r.get("Automation ID") or "").strip() or None
+                if automation_id:
+                    uid = f"{HARNESS}:csv:{automation_id}"
+                elif agent_id:
+                    uid = f"{HARNESS}:csv:{agent_id}"
+                else:
+                    # best-effort fallback for rows with neither identifier: can
+                    # still collide if two distinct rows share date+model+tokens.
+                    uid = f"{HARNESS}:csv:{date}:{model}:{i}:{cr}:{o}"
                 rows.append({
-                    "uid": f"{HARNESS}:csv:{date}:{model}:{i}:{cr}:{o}",
-                    "ts": ledger.normalize_iso(date),
+                    "uid": uid,
+                    "ts": ts,
                     "harness": HARNESS, "provider": PROVIDER, "model": model,
-                    "session_id": r.get("Cloud Agent ID") or None,
-                    "request_id": r.get("Automation ID") or None,
+                    "session_id": agent_id,
+                    "request_id": automation_id,
                     "input_tokens": i, "output_tokens": o,
                     "cache_read_tokens": cr, "cache_write_tokens": cw,
                     "reasoning_tokens": 0, "credits": 0,
@@ -174,14 +219,16 @@ def _ingest_csv(con, path):
         print(f"[{HARNESS}] could not read {base}; skipping", file=sys.stderr)
         return 0
     if not rows:
+        _mark_processed(path, processed_dir)
         return 0
     n = ledger.insert_usage(con, rows, on_conflict="replace")
     _supersede_self_tally(con, rows)
     print(f"[{HARNESS}] {base}: {len(rows)} events, {n} written", file=sys.stderr)
+    _mark_processed(path, processed_dir)
     return n
 
 
-def _ingest_manual(con, path, doc):
+def _ingest_manual(con, path, doc, processed_dir):
     month = doc.get("month")          # 'YYYY-MM'
     spend = doc.get("spend_usd")
     if not month or spend is None:
@@ -189,6 +236,9 @@ def _ingest_manual(con, path, doc):
               file=sys.stderr)
         return 0
     ts = f"{month}-01T12:00:00Z"
+    if ledger.older_than_retention(ts):
+        _mark_processed(path, processed_dir)
+        return 0   # pruned by monthly rollover; don't resurrect it
     row = [{
         "uid": f"{HARNESS}:manual:{month}",
         "ts": ts, "harness": HARNESS, "provider": PROVIDER,
@@ -199,7 +249,9 @@ def _ingest_manual(con, path, doc):
         "source": "manual", "confidence": "estimate",
         "raw_ref": f"{path}",
     }]
-    return ledger.insert_usage(con, row, on_conflict="replace")
+    n = ledger.insert_usage(con, row, on_conflict="replace")
+    _mark_processed(path, processed_dir)
+    return n
 
 
 def _supersede_self_tally(con, rows):
