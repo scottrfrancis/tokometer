@@ -98,6 +98,19 @@ def human(n):
     return str(int(n))
 
 
+def cache_hit_pct(cache_read, input_tok, cache_write):
+    """cache_read / (input + cache_read + cache_write), or "—" if all zero.
+
+    Cache reads can dominate the input-side token count (97%+ on a real
+    account) and are the biggest driver of actual cost, so this ratio -- not
+    the raw cache_read number alone -- is what makes that visible.
+    """
+    denom = (input_tok or 0) + (cache_read or 0) + (cache_write or 0)
+    if not denom:
+        return "—"
+    return f"{(cache_read or 0) / denom:.0%}"
+
+
 def q(con, sql, p=()):
     return con.execute(sql, p).fetchall()
 
@@ -204,32 +217,39 @@ def headline(con):
     rows = q(con, f"""
         SELECT {HKEY} hk, MAX(confidence) conf,
                SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens),
-               SUM(total_tokens), SUM(cost_usd), SUM(credits), COUNT(*)
+               SUM(cache_write_tokens), SUM(total_tokens), SUM(cost_usd),
+               SUM(credits), COUNT(*)
         FROM usage {where()} GROUP BY hk ORDER BY SUM(total_tokens) DESC""")
-    tot_tok = sum(r[5] for r in rows)
-    tot_cost = sum(r[6] or 0 for r in rows)
-    tot_rec = sum(r[8] for r in rows)
+    tot_tok = sum(r[6] for r in rows)
+    tot_cost = sum(r[7] or 0 for r in rows)
+    tot_rec = sum(r[9] for r in rows)
+    tot_input = sum(r[2] or 0 for r in rows)
+    tot_cache_read = sum(r[4] or 0 for r in rows)
+    tot_cache_write = sum(r[5] or 0 for r in rows)
+    overall_hit = cache_hit_pct(tot_cache_read, tot_input, tot_cache_write)
 
     cards = f"""
       <div class="cards">
         <div class="card"><div class="num">{human(tot_tok)}</div><div class="lbl">total tokens (MTD)</div></div>
         <div class="card"><div class="num">${tot_cost:,.2f}</div><div class="lbl">spend (MTD)</div></div>
         <div class="card"><div class="num">{tot_rec}</div><div class="lbl">records</div></div>
+        <div class="card"><div class="num">{overall_hit}</div><div class="lbl">cache hit % (MTD)</div></div>
       </div>"""
 
     trs = []
-    for h, conf, i, o, c, t, cost, cr, n in rows:
+    for h, conf, i, o, c, cw, t, cost, cr, n in rows:
         dot = f'<span class="dot" style="background:{color(h)}"></span>'
         badge = "ok" if conf == "exact" else "est"
+        hit = cache_hit_pct(c, i, cw)
         trs.append(f"""<tr>
           <td>{dot}{h}</td><td class="b-{badge}">{conf}</td>
           <td class="r">{human(i)}</td><td class="r">{human(o)}</td>
-          <td class="r">{human(c)}</td><td class="r">{human(t)}</td>
+          <td class="r">{human(c)}</td><td class="r">{hit}</td><td class="r">{human(t)}</td>
           <td class="r">${(cost or 0):,.2f}</td><td class="r">{human(cr)}</td><td class="r">{n}</td></tr>""")
     table = f"""
       <table class="stats">
         <thead><tr><th>harness</th><th>conf</th><th>in</th><th>out</th><th>cache</th>
-          <th>total</th><th>cost</th><th>credits</th><th>recs</th></tr></thead>
+          <th>hit%</th><th>total</th><th>cost</th><th>credits</th><th>recs</th></tr></thead>
         <tbody>{''.join(trs)}</tbody>
       </table>"""
     return cards + table
