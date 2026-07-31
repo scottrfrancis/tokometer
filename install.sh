@@ -78,7 +78,7 @@ if [ ! -f "$TOKOMETER_HOME/tokometer.env" ]; then
     fi
   done
   GITROOT="${GITROOT:-${GITROOT_EXISTS:-$HOME/workspace}}"
-  GITAUTHOR="$(git config --global user.email 2>/dev/null)"
+  GITAUTHOR="$(git config --global user.email 2>/dev/null || true)"
   GITAUTHOR="${GITAUTHOR:-you@example.com}"
   cat > "$TOKOMETER_HOME/tokometer.env" <<ENVEOF
 # tokometer per-machine config -- sourced by daily.sh and harvest.sh. Local only; not committed.
@@ -150,6 +150,11 @@ elif [ -n "${WINDIR:-}" ] || uname -s | grep -qiE 'mingw|msys|cygwin'; then
   echo '    -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable) \'
   echo '    -Principal (New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive)'
   echo "  (see docs/WINDOWS.md for python3 alias + UTF-8 prerequisites)"
+else
+  # Linux: no TCC/launchd equivalent blocking cron, but we still don't
+  # auto-edit the operator's crontab -- print the line for `crontab -e`.
+  echo "Linux detected -- add this line to your crontab (crontab -e) to schedule daily.sh at 04:00:"
+  echo "  0 4 * * * $TOKOMETER_HOME/daily.sh >> $TOKOMETER_HOME/daily.log 2>&1"
 fi
 
 echo "done. run: $TOKOMETER_HOME/harvest.sh"
