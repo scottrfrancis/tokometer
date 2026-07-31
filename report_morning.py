@@ -55,6 +55,19 @@ def human(n):
     return str(int(n))
 
 
+def cache_hit_pct(cache_read, input_tok, cache_write):
+    """cache_read / (input + cache_read + cache_write), or "—" if all zero.
+
+    Mirrors report_html.py: cache reads can dominate the input-side token
+    count (97%+ on a real account) and are the biggest driver of actual
+    cost, so this ratio is what makes that visible alongside the raw number.
+    """
+    denom = (input_tok or 0) + (cache_read or 0) + (cache_write or 0)
+    if not denom:
+        return "—"
+    return f"{(cache_read or 0) / denom:.0%}"
+
+
 def usd(x):
     return "$" + format(x or 0, ".2f")
 
@@ -155,7 +168,8 @@ def headline(con):
     rows = q(con, f"""
         SELECT {HKEY} hk, MAX(confidence) conf,
                SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens),
-               SUM(reasoning_tokens), SUM(total_tokens), SUM(cost_usd), COUNT(*)
+               SUM(cache_write_tokens), SUM(reasoning_tokens), SUM(total_tokens),
+               SUM(cost_usd), COUNT(*)
         FROM usage {WHERE_MTD}
         GROUP BY hk
         ORDER BY SUM(total_tokens) DESC
@@ -163,16 +177,19 @@ def headline(con):
     if not rows:
         return "\n".join(L + ["_no usage recorded this month_", ""])
 
-    L += ["| harness | conf | in | out | cache | reason | total | cost | records |",
-          "|---|---|--:|--:|--:|--:|--:|--:|--:|"]
-    g = [0, 0, 0, 0, 0, 0.0, 0]
-    for h, conf, i, o, c, r, t, cost, n in rows:
-        L.append(f"| {h} | {conf} | {human(i)} | {human(o)} | {human(c)} | "
+    L += ["| harness | conf | in | out | cache | hit% | reason | total | cost | records |",
+          "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|"]
+    g = [0, 0, 0, 0, 0, 0, 0.0, 0]
+    for h, conf, i, o, c, cw, r, t, cost, n in rows:
+        hit = cache_hit_pct(c, i, cw)
+        L.append(f"| {h} | {conf} | {human(i)} | {human(o)} | {human(c)} | {hit} | "
                  f"{human(r)} | {human(t)} | {usd(cost)} | {n} |")
-        for idx, v in enumerate((i, o, c, r, t, cost or 0, n)):
+        for idx, v in enumerate((i, o, c, cw, r, t, cost or 0, n)):
             g[idx] += v
+    overall_hit = cache_hit_pct(g[2], g[0], g[3])
     L.append(f"| **TOTAL** |  | **{human(g[0])}** | **{human(g[1])}** | **{human(g[2])}** | "
-             f"**{human(g[3])}** | **{human(g[4])}** | **{usd(g[5])}** | **{g[6]}** |")
+             f"**{overall_hit}** | **{human(g[4])}** | **{human(g[5])}** | **{usd(g[6])}** | **{g[7]}** |")
+    L += ["", f"_MTD cache hit rate (cache_read / input+cache_read+cache_write): **{overall_hit}**_"]
 
     L += ["", "_by model (subtotal under harness):_", ""]
     mrows = q(con, f"""
