@@ -4,7 +4,7 @@
 -- Per flightplan/docs/SRS.md §6.3.2 + §8.4.
 
 CREATE TABLE IF NOT EXISTS session_log_raw (
-  uid             TEXT PRIMARY KEY,        -- "sl-<host>-<sha256(rel_filepath)[:8]>-<mtime_ns>"
+  uid             TEXT PRIMARY KEY,        -- "sl-<host>-<sha256(raw_md bytes)[:16]>" -- content-hash dedup key (not path-derived; see collectors/session_logs.py)
   scope           TEXT NOT NULL,           -- 'global' | 'project'
   source_project  TEXT,                    -- repo basename when scope='project'
   rel_filepath    TEXT NOT NULL,           -- relative to ~ or to repo root

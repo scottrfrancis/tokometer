@@ -137,3 +137,69 @@ def test_collect_is_idempotent(tmp_tokometer, tmp_home_with_logs):
     count = con.execute("SELECT COUNT(*) FROM session_log_raw").fetchone()[0]
     con.close()
     assert count == 4
+
+
+def test_collect_dedupes_identical_content_across_legacy_and_current_paths(
+    tmp_tokometer, tmp_path
+):
+    """The same session log can legitimately live under both the current
+    <repo>/session-logs/ convention and the legacy <repo>/.claude/session-logs/
+    fallback during/after a migration. If the dedup key is derived from the
+    path, the identical file gets two distinct uids and is double-counted.
+    It must collapse to a single row instead.
+    """
+    home = tmp_path / "fake_home_dupe"
+    repos = home / "repos"
+    proj = repos / "coder"
+    (proj / "session-logs").mkdir(parents=True)
+    (proj / ".claude" / "session-logs").mkdir(parents=True)
+    content = "# Session\nsame content, two path conventions\n"
+    (proj / "session-logs" / "2026-06-13-0900.md").write_text(content)
+    (proj / ".claude" / "session-logs" / "2026-06-13-0900.md").write_text(content)
+
+    db_path = tmp_tokometer / "ledger.db"
+    con = sqlite3.connect(str(db_path))
+    result = sl.collect(con=con, home=home, repo_root=repos)
+    con.close()
+
+    assert result["scanned"] == 2
+    assert result["inserted"] == 1
+    assert result["skipped"] == 1
+
+    con = sqlite3.connect(str(db_path))
+    count = con.execute("SELECT COUNT(*) FROM session_log_raw").fetchone()[0]
+    con.close()
+    assert count == 1
+
+
+def test_collect_keeps_different_content_under_two_path_conventions_separate(
+    tmp_tokometer, tmp_path
+):
+    """Content-hash dedup must not collapse everything under a shared
+    directory name -- two genuinely different logs, one at each path
+    convention, both still get ingested as separate rows."""
+    home = tmp_path / "fake_home_distinct"
+    repos = home / "repos"
+    proj = repos / "coder"
+    (proj / "session-logs").mkdir(parents=True)
+    (proj / ".claude" / "session-logs").mkdir(parents=True)
+    (proj / "session-logs" / "2026-06-13-0900.md").write_text(
+        "# Session A\nfirst content\n"
+    )
+    (proj / ".claude" / "session-logs" / "2026-06-13-1000-x.md").write_text(
+        "# Session B\nsecond content\n"
+    )
+
+    db_path = tmp_tokometer / "ledger.db"
+    con = sqlite3.connect(str(db_path))
+    result = sl.collect(con=con, home=home, repo_root=repos)
+    con.close()
+
+    assert result["scanned"] == 2
+    assert result["inserted"] == 2
+    assert result["skipped"] == 0
+
+    con = sqlite3.connect(str(db_path))
+    count = con.execute("SELECT COUNT(*) FROM session_log_raw").fetchone()[0]
+    con.close()
+    assert count == 2
