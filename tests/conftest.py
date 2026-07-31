@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from lib import ledger
+
 
 @pytest.fixture
 def tmp_tokometer(tmp_path, monkeypatch):
@@ -27,6 +29,14 @@ def tmp_tokometer(tmp_path, monkeypatch):
         con.executescript(schema.read_text())
     con.commit()
     con.close()
+
+    # lib.ledger.DB_PATH is resolved from TOKOMETER_HOME ONCE at import time
+    # (see the gotcha documented in collectors/copilot_observe.py's
+    # _connect_now()), so setenv above alone doesn't redirect ledger.connect()
+    # for any collector's harvest()-style entrypoint. Patch it directly so
+    # tests can call harvest() and have it write to this tmp ledger.
+    monkeypatch.setattr(ledger, "DB_PATH", str(db))
+
     return home
 
 
