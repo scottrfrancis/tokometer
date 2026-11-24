@@ -81,10 +81,10 @@ KIND_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
     ),
     "tokometer_usage": (
         "usage", "tokometer-usage",
-        ("uid", "ts", "harness", "model", "account", "session_id", "cwd",
-         "input_tokens", "output_tokens", "cache_read_tokens",
+        ("uid", "ts", "harness", "provider", "model", "account", "session_id",
+         "cwd", "input_tokens", "output_tokens", "cache_read_tokens",
          "cache_write_tokens", "cost_usd",
-         "provider", "subscription", "org", "reasoning_tokens", "credits",
+         "subscription", "org", "reasoning_tokens", "credits",
          "source", "confidence"),
     ),
     "session_log": (
@@ -132,8 +132,8 @@ COLUMN_REMAPS: dict[str, dict[str, str]] = {
 # Columns with no bronze.* counterpart, shipped in the row's `meta` JSON
 # instead. NULLs are left out.
 META_COLUMNS: dict[str, tuple[str, ...]] = {
-    "tokometer_usage": ("provider", "subscription", "org", "reasoning_tokens",
-                        "credits", "source", "confidence"),
+    "tokometer_usage": ("subscription", "org", "reasoning_tokens", "credits",
+                        "source", "confidence"),
 }
 
 
