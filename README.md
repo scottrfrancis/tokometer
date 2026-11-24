@@ -126,7 +126,9 @@ export TOKOMETER_GIT_DEPTH="4"
 
 Claude Code keeps all transcripts in one shared place regardless of which account is active, so tokometer
 figures out *who* ran each session from each profile's own `history.jsonl`. If you switch accounts with a
-profile scheme (separate `HOME`s), point the discovery glob at them:
+profile scheme (separate `HOME`s), point the discovery glob at them. Config dirs named `~/.claude-*`
+(for example ones a shell hook selects per project through `CLAUDE_CONFIG_DIR`) are picked up on their
+own.
 
 ```sh
 export CLAUDE_PROFILES_GLOB="$HOME/.claude-profiles/*/.claude"

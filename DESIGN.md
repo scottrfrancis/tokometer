@@ -219,13 +219,18 @@ WHERE m.created_at > :last_harvest_epoch;
   records the repo (`cwd`) but not the account. Attribution instead comes from each profile's own
   (un-symlinked) `history.jsonl`, which lists the `sessionId`s prompted under that profile. The
   collector unions every profile's history into a `sessionId → (account, subscription, org)` index
-  and stamps each message by its `sessionId`. Identity per profile: `subscriptionType`
-  (`max|team|…`, or `api`) from `<root>/.credentials.json`; `emailAddress` + `organizationName`
-  from `oauthAccount` in the home `.claude.json`. Stored in `usage.account` (login email),
+  and stamps each message by its `sessionId`. Roots also include any `~/.claude-*` config dir
+  (holding `history.jsonl` or `.claude.json`) that a shell hook selects per project through
+  `CLAUDE_CONFIG_DIR`; they share the transcript store too. Identity per root: `emailAddress` +
+  `organizationName` from `oauthAccount` in `<root>/.claude.json`, else the home `.claude.json`
+  beside the root; `subscriptionType` (`max|team|…`) from `<root>/.credentials.json`, else
+  mapped from `oauthAccount.organizationType` (macOS keeps the token in the Keychain, so the
+  file is often absent), else `api` when an API key is present. Stored in `usage.account` (login email),
   `usage.subscription` (tier), `usage.org` (friendly label: Personal / Employer / Client).
   Sessions with no history entry are left **unattributed** (`org` NULL). Each run also reconciles:
   rows whose session became attributable after first harvest are back-filled. Measured coverage on
-  this machine: ~98% of tokens attributed. Override discovery with `CLAUDE_CONFIG_ROOTS` /
+  this machine, 2026-11-24: 99.7% of October and 100% of November Claude Code tokens attributed.
+  Override discovery with `CLAUDE_CONFIG_ROOTS` /
   `CLAUDE_PROFILES_GLOB`.
 - **Cost:** left `$0` — a Max/Pro seat is flat-rate, not metered per token (like droid credits /
   local). Set from a price table if you run a metered API key.

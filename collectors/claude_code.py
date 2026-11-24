@@ -16,10 +16,18 @@ history entry (older, or never prompted) are left unattributed (org NULL).
 
 Config roots scanned for identity + history:
   ~/.claude                          -- default login
+  $CLAUDE_CONFIG_DIR                 -- if exported in the harvesting shell
   ~/.claude-profiles/<name>/.claude  -- one per profile (al, bs, ss, ...)
+  ~/.claude-<name>                   -- config dirs a shell hook selects through
+                                        CLAUDE_CONFIG_DIR (e.g. per client repo);
+                                        only dirs holding history.jsonl or
+                                        .claude.json
 Identity per root:
-  subscription <- <root>/.credentials.json claudeAiOauth.subscriptionType (max|team|...)
-  account      <- <root>/../.claude.json    oauthAccount.emailAddress
+  account      <- <root>/.claude.json oauthAccount.emailAddress, else
+                  <root>/../.claude.json (the default ~/.claude)
+  subscription <- <root>/.credentials.json claudeAiOauth.subscriptionType, else
+                  oauthAccount.organizationType (claude_max -> max, ...): on
+                  macOS the token is in the Keychain and the file is absent
   org          <- oauthAccount.organizationName, personal orgs mapped to 'Personal'
 
 Transcripts are read ONCE from the (de-duplicated, realpath'd) shared projects
@@ -57,7 +65,7 @@ attributable is back-filled, so attribution is correct even if a prompt's histor
 entry lands after the message was first harvested.
 
 Overrides (mainly for testing):
-  CLAUDE_CONFIG_DIR     default config root (else ~/.claude)
+  CLAUDE_CONFIG_DIR     an additional config root
   CLAUDE_PROFILES_GLOB  glob for profile roots (else ~/.claude-profiles/*/.claude)
   CLAUDE_CONFIG_ROOTS   os.pathsep-separated explicit root list; replaces discovery
 """
@@ -115,14 +123,37 @@ def _response_key(o):
     return msg.get("id") or o.get("requestId") or o.get("uuid")
 
 
+# organizationType in the account record -> subscription tier, for roots whose
+# login token is in the macOS Keychain and so has no .credentials.json.
+ORG_TYPE_SUBSCRIPTION = {
+    "claude_pro": "pro",
+    "claude_max": "max",
+    "claude_team": "team",
+    "claude_enterprise": "enterprise",
+}
+
+
+def _is_config_dir(path):
+    return (os.path.isfile(os.path.join(path, "history.jsonl"))
+            or os.path.isfile(os.path.join(path, ".claude.json")))
+
+
 def config_roots():
-    """Claude config roots (default login + every profile), order preserved."""
+    """Claude config roots (default login, every profile, every routed config
+    dir), order preserved."""
     if os.environ.get("CLAUDE_CONFIG_ROOTS"):
         raw = os.environ["CLAUDE_CONFIG_ROOTS"].split(os.pathsep)
     else:
-        raw = [os.environ.get("CLAUDE_CONFIG_DIR", "~/.claude")]
+        # ~/.claude always, even when CLAUDE_CONFIG_DIR is exported: a shell
+        # hook that routes it per project leaves it set in the shell a manual
+        # harvest runs from.
+        raw = ["~/.claude"]
+        if os.environ.get("CLAUDE_CONFIG_DIR"):
+            raw.append(os.environ["CLAUDE_CONFIG_DIR"])
         raw += sorted(glob.glob(os.path.expanduser(
             os.environ.get("CLAUDE_PROFILES_GLOB", "~/.claude-profiles/*/.claude"))))
+        raw += sorted(p for p in glob.glob(os.path.expanduser("~/.claude-*"))
+                      if _is_config_dir(p))
     seen, roots = set(), []
     for r in raw:
         p = os.path.realpath(os.path.expanduser(r))
@@ -143,16 +174,21 @@ def resolve_identity(root):
     """(account_email, subscription_tier, org_label) for one config root."""
     creds = _load_json(os.path.join(root, ".credentials.json"))
     oauth = creds.get("claudeAiOauth") or {}
-    subscription = oauth.get("subscriptionType")
-    if not subscription and (creds.get("apiKey") or os.environ.get("ANTHROPIC_API_KEY")):
-        subscription = "api"
     acct = {}
-    for cand in (os.path.join(os.path.dirname(root), ".claude.json"),
-                 os.path.join(root, ".claude.json")):
+    # <root>/.claude.json first: with CLAUDE_CONFIG_DIR set, Claude Code keeps
+    # the account record there, and any <home>/.claude.json beside the root is
+    # left over from before. Without it (the default ~/.claude), the record is
+    # ~/.claude.json.
+    for cand in (os.path.join(root, ".claude.json"),
+                 os.path.join(os.path.dirname(root), ".claude.json")):
         j = _load_json(cand)
         if j.get("oauthAccount"):
             acct = j["oauthAccount"]
             break
+    subscription = (oauth.get("subscriptionType")
+                    or ORG_TYPE_SUBSCRIPTION.get(acct.get("organizationType")))
+    if not subscription and (creds.get("apiKey") or os.environ.get("ANTHROPIC_API_KEY")):
+        subscription = "api"
     email = acct.get("emailAddress") or acct.get("accountUuid")
     return email, subscription, friendly_org(acct.get("organizationName"))
 
