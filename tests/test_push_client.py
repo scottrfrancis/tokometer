@@ -394,3 +394,63 @@ def test_usage_row_meta_omits_unknown_values(mock_ingest, tmp_tokometer):
 
     assert pushed["meta"]["provider"] == "anthropic"
     assert "subscription" not in pushed["meta"] and "org" not in pushed["meta"]
+
+
+# ─── push_all drains the backlog ───────────────────────────────────────────
+#
+# The push runs every 2h. Sending one batch per kind per run caps throughput
+# at batch x 12 rows a day, below what the collectors write, so Beaufort fell
+# further behind every day.
+
+def _seed_usage(tmp_tokometer, n):
+    db = tmp_tokometer / "ledger.db"
+    con = sqlite3.connect(str(db))
+    for i in range(n):
+        con.execute(
+            "INSERT INTO usage (uid, ts, harness, input_tokens, source, confidence) "
+            "VALUES (?, '2026-11-24T10:00:00Z', 'omp', 1, 'session-file', 'exact')",
+            (f"u-drain-{i}",))
+    con.commit()
+    con.close()
+    return db
+
+
+def test_push_all_sends_every_batch_in_one_run(mock_ingest, tmp_tokometer):
+    db = _seed_usage(tmp_tokometer, 5)
+    mock_ingest.response_body = {"accepted": 2, "conflicted": 0}
+
+    out = pc.push_all(kinds=["tokometer_usage"], ingest_url=mock_ingest.url,
+                      token="t", db_path=db, batch=2)
+
+    sizes = [len(body["rows"]) for _, body in mock_ingest.requests]
+    assert sizes == [2, 2, 1]
+    (res,) = out["results"]
+    assert res["attempted"] == 5 and res["error"] is None
+    from push import state as ps
+    assert ps.watermark(ps.load(), "tokometer_usage") == 5
+
+
+def test_push_all_stops_at_a_failed_batch(mock_ingest, tmp_tokometer):
+    db = _seed_usage(tmp_tokometer, 5)
+    mock_ingest.response_status = 503
+    mock_ingest.response_body = {"detail": "down"}
+
+    out = pc.push_all(kinds=["tokometer_usage"], ingest_url=mock_ingest.url,
+                      token="t", db_path=db, batch=2)
+
+    assert len(mock_ingest.requests) == 1
+    assert out["ok"] is False
+    from push import state as ps
+    assert ps.watermark(ps.load(), "tokometer_usage") is None
+
+
+def test_push_all_caps_batches_per_run(mock_ingest, tmp_tokometer):
+    db = _seed_usage(tmp_tokometer, 5)
+    mock_ingest.response_body = {"accepted": 1, "conflicted": 0}
+
+    pc.push_all(kinds=["tokometer_usage"], ingest_url=mock_ingest.url,
+                token="t", db_path=db, batch=1, max_batches=3)
+
+    assert len(mock_ingest.requests) == 3
+    from push import state as ps
+    assert ps.watermark(ps.load(), "tokometer_usage") == 3
