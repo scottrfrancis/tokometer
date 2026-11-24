@@ -119,3 +119,40 @@ def test_fresh_install_enables_omp(tmp_path):
     enabled = next(line for line in env_text.splitlines()
                    if line.startswith("export TOKOMETER_HARNESSES="))
     assert " omp " in f" {enabled.split('=', 1)[1].strip(chr(34))} "
+
+
+def test_installs_without_the_sqlite3_cli(tmp_path):
+    """A stock Kubuntu desktop has python3 but not the sqlite3 CLI. install.sh
+    stopped at its first `sqlite3` call there (set -e), after copying the
+    collectors but before the schema, the push package and the migrations."""
+    import shutil
+    tools = tmp_path / "only_bin"
+    tools.mkdir()
+    for name in ("bash", "sh", "dirname", "mkdir", "cp", "chmod", "cat", "grep",
+                 "git", "python3", "whoami"):
+        found = shutil.which(name)
+        assert found, name
+        (tools / name).symlink_to(found)
+    for name, body in (("uname", 'echo "Linux"'), ("launchctl", "exit 0")):
+        stub = tools / name
+        stub.write_text(f"#!/bin/sh\n{body}\n")
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    home = tmp_path / "home"
+    home.mkdir()
+    tokometer_home = tmp_path / "tokometer_home"
+
+    result = subprocess.run(
+        [str(tools / "bash"), str(INSTALL_SH)], cwd=str(REPO_ROOT),
+        env={"HOME": str(home), "TOKOMETER_HOME": str(tokometer_home),
+             "TOKOMETER_SKIP_PLAYWRIGHT": "1", "PATH": str(tools)},
+        capture_output=True, text=True, timeout=60)
+
+    assert result.returncode == 0, result.stderr
+    assert (tokometer_home / "push" / "client.py").is_file()
+    import sqlite3
+    con = sqlite3.connect(str(tokometer_home / "ledger.db"))
+    cols = {r[1] for r in con.execute("PRAGMA table_info(usage)")}
+    tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    con.close()
+    assert {"account", "subscription", "org", "cwd", "credits"} <= cols
+    assert "session_log_raw" in tables

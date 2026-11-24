@@ -17,12 +17,28 @@ cp "$SRC/report_html.py"           "$TOKOMETER_HOME/report_html.py"
 cp "$SRC/monthly.py"               "$TOKOMETER_HOME/monthly.py"
 chmod +x "$TOKOMETER_HOME/harvest.sh" "$TOKOMETER_HOME/daily.sh"
 
+# Run SQL against the ledger, from stdin or from the first argument. Uses the
+# sqlite3 CLI when it is installed and python3's sqlite3 module otherwise: a
+# stock Linux desktop has python3 but not the CLI, and set -e would stop the
+# install at the first call, after the code copy but before the schema.
+ledger_sql() {
+  if command -v sqlite3 >/dev/null 2>&1; then
+    sqlite3 "$TOKOMETER_HOME/ledger.db" "$@"
+  else
+    python3 -c 'import sqlite3, sys
+sql = sys.argv[2] if len(sys.argv) > 2 else sys.stdin.read()
+con = sqlite3.connect(sys.argv[1])
+con.executescript(sql)
+con.close()' "$TOKOMETER_HOME/ledger.db" "$@"
+  fi
+}
+
 # ledger schema (idempotent)
-sqlite3 "$TOKOMETER_HOME/ledger.db" < "$SRC/schema.sql"
+ledger_sql < "$SRC/schema.sql"
 
 # flightplan extensions: session_log_raw + collectors/session_logs.py + push/
 if [ -f "$SRC/schema_session_logs.sql" ]; then
-  sqlite3 "$TOKOMETER_HOME/ledger.db" < "$SRC/schema_session_logs.sql" \
+  ledger_sql < "$SRC/schema_session_logs.sql" \
     && echo "migrated: session_log_raw table"
 fi
 
@@ -44,24 +60,24 @@ if [ -f "$SRC/flightplan.env.example" ]; then
 fi
 
 # additive migrations for pre-existing ledgers (ignore "duplicate column" errors)
-sqlite3 "$TOKOMETER_HOME/ledger.db" \
+ledger_sql \
   "ALTER TABLE usage ADD COLUMN credits INTEGER DEFAULT 0;" 2>/dev/null \
   && echo "migrated: added usage.credits" || true
-sqlite3 "$TOKOMETER_HOME/ledger.db" \
+ledger_sql \
   "ALTER TABLE usage ADD COLUMN cwd TEXT;" 2>/dev/null \
   && echo "migrated: added usage.cwd" || true
-sqlite3 "$TOKOMETER_HOME/ledger.db" \
+ledger_sql \
   "ALTER TABLE usage ADD COLUMN account TEXT;" 2>/dev/null \
   && echo "migrated: added usage.account" || true
-sqlite3 "$TOKOMETER_HOME/ledger.db" \
+ledger_sql \
   "ALTER TABLE usage ADD COLUMN subscription TEXT;" 2>/dev/null \
   && echo "migrated: added usage.subscription" || true
-sqlite3 "$TOKOMETER_HOME/ledger.db" \
+ledger_sql \
   "ALTER TABLE usage ADD COLUMN org TEXT;" 2>/dev/null \
   && echo "migrated: added usage.org" || true
-sqlite3 "$TOKOMETER_HOME/ledger.db" \
+ledger_sql \
   "CREATE INDEX IF NOT EXISTS idx_usage_account ON usage(account);" 2>/dev/null || true
-sqlite3 "$TOKOMETER_HOME/ledger.db" \
+ledger_sql \
   "CREATE INDEX IF NOT EXISTS idx_usage_org ON usage(org);" 2>/dev/null || true
 
 # per-machine config (git scan root + author), auto-detected, never clobbered.
