@@ -98,16 +98,20 @@ def test_extract_usage_openai_style():
 
 def test_extract_usage_openai_style_reasoning_and_cache_tokens():
     # o1/o3-class models routed through Copilot carry these nested detail
-    # blocks; both must be captured, not silently dropped (bug: only
-    # prompt_tokens/completion_tokens were read).
+    # blocks. OpenAI counts cached_tokens inside prompt_tokens and
+    # reasoning_tokens inside completion_tokens, while the ledger adds input,
+    # output, cache and reasoning columns together. Split the subsets out so
+    # the five columns sum to the API's own total_tokens.
     line = ('{"usage":{"prompt_tokens":500,"completion_tokens":120,"total_tokens":620,'
             '"completion_tokens_details":{"reasoning_tokens":64},'
             '"prompt_tokens_details":{"cached_tokens":200}}}')
     u = ccl.extract_usage(line)
-    assert u["input_tokens"] == 500
-    assert u["output_tokens"] == 120
-    assert u["reasoning_tokens"] == 64
+    assert u["input_tokens"] == 300
     assert u["cache_read_tokens"] == 200
+    assert u["output_tokens"] == 56
+    assert u["reasoning_tokens"] == 64
+    assert sum(u.get(k, 0) for k in ("input_tokens", "output_tokens", "cache_read_tokens",
+                                     "cache_write_tokens", "reasoning_tokens")) == 620
 
 
 def test_extract_usage_openai_style_missing_detail_blocks_defaults_to_zero():
@@ -136,9 +140,9 @@ def test_collect_maps_openai_reasoning_and_cache_tokens_into_ledger(tmp_tokomete
     ccl.collect(con=con, log_glob=OPENAI_REASONING_FIXTURE_GLOB)
     row = con.execute(
         "SELECT model, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens,"
-        " confidence FROM usage WHERE uid='copilot-vscode:aabbccdd'").fetchone()
+        " total_tokens, confidence FROM usage WHERE uid='copilot-vscode:aabbccdd'").fetchone()
     con.close()
-    assert row == ("o3-mini", 500, 120, 64, 200, "exact")
+    assert row == ("o3-mini", 300, 56, 64, 200, 620, "exact")
 
 
 # ---------- file-level collect ----------
