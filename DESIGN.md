@@ -231,7 +231,9 @@ WHERE m.created_at > :last_harvest_epoch;
   mapped from `oauthAccount.organizationType` (macOS keeps the token in the Keychain, so the
   file is often absent), else `api` when an API key is present. Stored in `usage.account` (login email),
   `usage.subscription` (tier), `usage.org` (friendly label: Personal / Employer / Client).
-  Sessions with no history entry are left **unattributed** (`org` NULL). Each run also reconciles:
+  Claude Desktop and VS Code extension sessions write no history; they are placed by the
+  `file-history/<sessionId>` or `session-env/<sessionId>` dir in the one root that holds it.
+  Sessions with neither are left **unattributed** (`org` NULL). Each run also reconciles:
   rows whose session became attributable after first harvest are back-filled. Measured coverage on
   this machine, 2026-11-24: 99.7% of October and 100% of November Claude Code tokens attributed.
   Override discovery with `CLAUDE_CONFIG_ROOTS` /

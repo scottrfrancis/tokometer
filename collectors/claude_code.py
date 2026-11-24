@@ -11,8 +11,15 @@ Authoritative attribution comes from each profile's own (un-symlinked) history:
 Because Claude Code writes history.jsonl under the *active* profile's HOME, the
 sessionIds it lists were unambiguously run under that profile's account. We union
 every profile's history into a sessionId -> (account, subscription, org) index,
-then stamp each harvested assistant message by its `sessionId`. Sessions with no
-history entry (older, or never prompted) are left unattributed (org NULL).
+then stamp each harvested assistant message by its `sessionId`.
+
+Claude Desktop and the VS Code extension never write prompts to history.jsonl.
+Their sessions are placed by the per-session state Claude Code keeps in the
+config dir it ran under, <root>/file-history/<sessionId>/ and then
+<root>/session-env/<sessionId>/, when exactly one root holds it (a symlinked,
+shared marker dir is ignored). On two machines on 2026-11-24 this agreed with
+history.jsonl for every session that had both. Sessions with neither are left
+unattributed (org NULL).
 
 Config roots scanned for identity + history:
   ~/.claude                          -- default login
@@ -205,11 +212,57 @@ def resolve_identity(root):
     return email, subscription, friendly_org(acct.get("organizationName"))
 
 
+# Per-session state Claude Code keeps in the active config dir, strongest
+# evidence first: edit checkpoints, then the session's env snapshot dir.
+SESSION_MARKER_DIRS = ("file-history", "session-env")
+
+
+def session_markers(roots):
+    """sessionId -> root, for sessions whose state dirs sit in exactly one root.
+
+    Claude Desktop and the VS Code extension never write prompts to
+    history.jsonl, but every session leaves <root>/file-history/<sessionId>/
+    or <root>/session-env/<sessionId>/ in the config dir it ran under. A
+    marker dir that is a symlink (shared with another root) is not evidence.
+    """
+    seen = {d: {} for d in SESSION_MARKER_DIRS}
+    for root in roots:
+        for d in SESSION_MARKER_DIRS:
+            p = os.path.join(root, d)
+            if os.path.islink(p) or not os.path.isdir(p):
+                continue
+            try:
+                names = os.listdir(p)
+            except OSError:
+                continue
+            for sid in names:
+                seen[d].setdefault(sid, set()).add(root)
+    out = {}
+    for d in SESSION_MARKER_DIRS:
+        for sid, where in seen[d].items():
+            if sid not in out and len(where) == 1:
+                out[sid] = next(iter(where))
+    return out
+
+
 def session_index(roots):
-    """sessionId -> (account, subscription, org), latest history entry wins."""
+    """sessionId -> (account, subscription, org).
+
+    The latest history.jsonl entry wins; sessions with none (Claude Desktop,
+    the VS Code extension) fall back to session_markers().
+    """
+    idents = {root: resolve_identity(root) for root in roots}
+    index = _history_index(roots, idents)
+    for sid, root in session_markers(roots).items():
+        index.setdefault(sid, idents[root])
+    return index
+
+
+def _history_index(roots, idents):
+    """sessionId -> identity from history.jsonl, latest entry wins."""
     best = {}  # sid -> (timestamp, identity)
     for root in roots:
-        ident = resolve_identity(root)
+        ident = idents[root]
         hp = os.path.join(root, "history.jsonl")
         try:
             fh = open(hp, errors="replace")

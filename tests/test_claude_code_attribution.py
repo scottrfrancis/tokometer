@@ -145,3 +145,106 @@ def test_session_from_a_routed_dir_is_attributed(tmp_tokometer, home):
         "sess-employer": ("me@employer.example", "team", "Employer"),
         "sess-personal": ("me@personal.example", "max", "Personal"),
     }
+
+
+# --- sessions with no history entry ------------------------------------------
+#
+# Claude Desktop and the VS Code extension run sessions that never write a
+# prompt to history.jsonl. Claude Code still keeps per-session state in the
+# active config dir: file-history/<sessionId>/ (edit checkpoints) and
+# session-env/<sessionId>/. Those dirs are per root even where projects/ is
+# shared, so they name the login a session ran under.
+
+def _marker(root, kind, sid):
+    (root / kind / sid).mkdir(parents=True, exist_ok=True)
+
+
+def _one_session(home, sid):
+    proj = home / ".claude" / "projects" / "-repo"
+    proj.mkdir(parents=True, exist_ok=True)
+    line = {"type": "assistant", "sessionId": sid, "timestamp": ledger.iso_utc(),
+            "cwd": "/repo", "uuid": f"u-{sid}", "requestId": f"r-{sid}",
+            "message": {"id": f"msg-{sid}", "model": "m",
+                        "usage": {"input_tokens": 1, "output_tokens": 1}}}
+    (proj / f"{sid}.jsonl").write_text(json.dumps(line) + "\n")
+
+
+def _attribution(tmp_tokometer, sid):
+    con = sqlite3.connect(str(tmp_tokometer / "ledger.db"))
+    got = con.execute("SELECT account, subscription, org FROM usage WHERE session_id=?",
+                      (sid,)).fetchone()
+    con.close()
+    return got
+
+
+def test_ide_session_attributed_from_its_file_history(tmp_tokometer, home):
+    _account(home / ".claude.json", PERSONAL)
+    employer = _routed(home, ".claude-employer", EMPLOYER)
+    _marker(employer, "file-history", "sess-ide")
+    _one_session(home, "sess-ide")
+
+    cc.harvest()
+
+    assert _attribution(tmp_tokometer, "sess-ide") == ("me@employer.example", "team", "Employer")
+
+
+def test_session_env_is_used_when_there_is_no_file_history(tmp_tokometer, home):
+    _account(home / ".claude.json", PERSONAL)
+    _routed(home, ".claude-employer", EMPLOYER)
+    _marker(home / ".claude", "session-env", "sess-ide")
+    _one_session(home, "sess-ide")
+
+    cc.harvest()
+
+    assert _attribution(tmp_tokometer, "sess-ide") == ("me@personal.example", "max", "Personal")
+
+
+def test_file_history_settles_a_session_env_seen_in_two_roots(tmp_tokometer, home):
+    _account(home / ".claude.json", PERSONAL)
+    employer = _routed(home, ".claude-employer", EMPLOYER)
+    _marker(home / ".claude", "session-env", "sess-ide")
+    _marker(employer, "session-env", "sess-ide")
+    _marker(employer, "file-history", "sess-ide")
+    _one_session(home, "sess-ide")
+
+    cc.harvest()
+
+    assert _attribution(tmp_tokometer, "sess-ide")[2] == "Employer"
+
+
+def test_markers_in_two_roots_leave_the_session_unattributed(tmp_tokometer, home):
+    _account(home / ".claude.json", PERSONAL)
+    employer = _routed(home, ".claude-employer", EMPLOYER)
+    _marker(home / ".claude", "session-env", "sess-ide")
+    _marker(employer, "session-env", "sess-ide")
+    _one_session(home, "sess-ide")
+
+    cc.harvest()
+
+    assert _attribution(tmp_tokometer, "sess-ide") == (None, None, None)
+
+
+def test_history_wins_over_markers(tmp_tokometer, home):
+    _account(home / ".claude.json", PERSONAL)
+    _history(home / ".claude", "sess-cli")
+    employer = _routed(home, ".claude-employer", EMPLOYER)
+    _marker(employer, "file-history", "sess-cli")
+    _one_session(home, "sess-cli")
+
+    cc.harvest()
+
+    assert _attribution(tmp_tokometer, "sess-cli")[2] == "Personal"
+
+
+def test_shared_marker_dirs_are_not_evidence(tmp_tokometer, home):
+    """A profile that symlinks file-history to the default root's would
+    otherwise claim every session that root ran."""
+    _account(home / ".claude.json", PERSONAL)
+    employer = _routed(home, ".claude-employer", EMPLOYER)
+    _marker(home / ".claude", "file-history", "sess-ide")
+    (employer / "file-history").symlink_to(home / ".claude" / "file-history")
+    _one_session(home, "sess-ide")
+
+    cc.harvest()
+
+    assert _attribution(tmp_tokometer, "sess-ide")[2] == "Personal"
