@@ -7,8 +7,18 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
+from lib import ledger
 from collectors import copilot_chat_log as ccl
 from collectors import copilot_vscode as otel
+
+
+@pytest.fixture(autouse=True)
+def _no_retention(monkeypatch):
+    """The captured logs carry fixed dates; keep them inside the retention window."""
+    monkeypatch.setattr(ledger, "older_than_retention", lambda ts: False)
+
 
 # Same Trace-log fixture used by test_copilot_chat_log.py, so we can run the
 # real chat-log collector first and then feed the OTel collector a synthetic

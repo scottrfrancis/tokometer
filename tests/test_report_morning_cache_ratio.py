@@ -12,6 +12,10 @@ from __future__ import annotations
 import sqlite3
 
 import report_morning as rm
+from lib import ledger
+
+# headline() is month-to-date: rows must fall in the current month.
+NOW = ledger.iso_utc()
 
 
 def _connect(home):
@@ -29,7 +33,7 @@ def _insert(con, uid, ts, harness, i, o, cache_read, cache_write, credits=0):
 def test_headline_shows_cache_hit_ratio_per_harness(tmp_tokometer):
     con = _connect(tmp_tokometer)
     # input=100, cache_read=900, cache_write=0 -> 90%
-    _insert(con, "u1", "2026-07-15T15:00:00Z", "claude-code", 100, 50, 900, 0)
+    _insert(con, "u1", NOW, "claude-code", 100, 50, 900, 0)
     con.commit()
 
     md = rm.headline(con)
@@ -41,7 +45,7 @@ def test_headline_shows_cache_hit_ratio_per_harness(tmp_tokometer):
 def test_headline_cache_hit_ratio_accounts_for_cache_write(tmp_tokometer):
     con = _connect(tmp_tokometer)
     # input=0, cache_read=800, cache_write=200 -> 80%
-    _insert(con, "u1", "2026-07-15T15:00:00Z", "droid", 0, 10, 800, 200)
+    _insert(con, "u1", NOW, "droid", 0, 10, 800, 200)
     con.commit()
 
     md = rm.headline(con)
@@ -52,7 +56,7 @@ def test_headline_cache_hit_ratio_accounts_for_cache_write(tmp_tokometer):
 
 def test_headline_cache_hit_ratio_zero_division_shows_dash(tmp_tokometer):
     con = _connect(tmp_tokometer)
-    _insert(con, "u1", "2026-07-15T15:00:00Z", "cursor", 0, 0, 0, 0, credits=5)
+    _insert(con, "u1", NOW, "cursor", 0, 0, 0, 0, credits=5)
     con.commit()
 
     md = rm.headline(con)  # must not raise ZeroDivisionError
@@ -63,7 +67,7 @@ def test_headline_cache_hit_ratio_zero_division_shows_dash(tmp_tokometer):
 
 def test_headline_still_shows_raw_cache_read_tokens(tmp_tokometer):
     con = _connect(tmp_tokometer)
-    _insert(con, "u1", "2026-07-15T15:00:00Z", "claude-code", 100, 50, 12_500_000, 0)
+    _insert(con, "u1", NOW, "claude-code", 100, 50, 12_500_000, 0)
     con.commit()
 
     md = rm.headline(con)
