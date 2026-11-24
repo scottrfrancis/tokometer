@@ -109,3 +109,13 @@ def test_darwin_path_unaffected_by_linux_fix(tmp_path):
     assert result.returncode == 0
     assert "scheduled daily.sh at 04:00" in result.stdout
     assert "crontab" not in result.stdout.lower()
+
+
+def test_fresh_install_enables_omp(tmp_path):
+    result, tokometer_home = _run_install(tmp_path, uname_override="Linux")
+    assert result.returncode == 0, result.stderr
+
+    env_text = (tokometer_home / "tokometer.env").read_text()
+    enabled = next(line for line in env_text.splitlines()
+                   if line.startswith("export TOKOMETER_HARNESSES="))
+    assert " omp " in f" {enabled.split('=', 1)[1].strip(chr(34))} "

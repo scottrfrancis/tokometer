@@ -1,4 +1,5 @@
-"""collectors/session_logs.py -- scan ~/.claude/session-logs/ + per-repo session-log dirs.
+"""collectors/session_logs.py -- scan ~/.claude/session-logs/ + ~/.omp/session-logs/
++ per-repo session-log dirs.
 
 Lands rows in tokometer's session_log_raw table (additive migration in
 schema_session_logs.sql). The Beaufort REST push client then ships rows
@@ -111,7 +112,8 @@ def iter_session_log_paths(
 ) -> Iterable[tuple[Path, str, str | None]]:
     """Yield (abs_path, scope, source_project?) tuples.
 
-    - global: ~/.claude/session-logs/**/*.md (recursive; picks up archive/)
+    - global: ~/.claude/session-logs/**/*.md and ~/.omp/session-logs/**/*.md
+      (recursive; picks up archive/)
     - project: any <repo>/session-logs/*.md OR <repo>/.claude/session-logs/*.md
       found while walking repo_root up to REPO_SCAN_DEPTH levels deep. Repos are
       commonly grouped (group/repo/session-logs) and the dir may sit at the repo
@@ -124,11 +126,13 @@ def iter_session_log_paths(
     if repo_root is None:
         repo_root = REPO_SCAN_ROOT
 
-    # global (recursive so archived logs are captured too)
-    global_dir = home / ".claude" / "session-logs"
-    if global_dir.is_dir():
-        for p in sorted(global_dir.rglob("*.md")):
-            yield (p, "global", None)
+    # global (recursive so archived logs are captured too). Claude Code keeps
+    # its at ~/.claude/session-logs; OMP at ~/.omp/session-logs.
+    for global_dir in (home / ".claude" / "session-logs",
+                       home / ".omp" / "session-logs"):
+        if global_dir.is_dir():
+            for p in sorted(global_dir.rglob("*.md")):
+                yield (p, "global", None)
 
     # per-repo: bounded recursive walk, finding dirs literally named
     # "session-logs" (whether at a repo root or under .claude/).

@@ -203,3 +203,16 @@ def test_collect_keeps_different_content_under_two_path_conventions_separate(
     count = con.execute("SELECT COUNT(*) FROM session_log_raw").fetchone()[0]
     con.close()
     assert count == 2
+
+
+def test_iter_finds_omp_global_session_logs(tmp_path):
+    """OMP keeps its session logs at ~/.omp/session-logs, beside Claude Code's."""
+    home = tmp_path / "home"
+    (home / ".omp" / "session-logs" / "archive").mkdir(parents=True)
+    (home / ".omp" / "session-logs" / "2026-11-24-0900-omp.md").write_text("x")
+    (home / ".omp" / "session-logs" / "archive" / "2026-11-01-0800-old.md").write_text("y")
+
+    paths = list(sl.iter_session_log_paths(home=home, repo_root=tmp_path / "norepos"))
+
+    got = {(p.name, scope) for p, scope, _ in paths}
+    assert got == {("2026-11-24-0900-omp.md", "global"), ("2026-11-01-0800-old.md", "global")}
