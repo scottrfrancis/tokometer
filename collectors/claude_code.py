@@ -49,16 +49,22 @@ sum input/output/cache tokens across all of them instead of trusting the
 top-level fields.
 
 Subagents (the "Agent" tool) do not appear in the session transcript's
-type=="assistant" lines. Newer Claude Code versions write each subagent's turns
-to <session>/subagents/agent-<agentId>.jsonl; the transcript glob in harvest()
-is deliberately non-recursive and does not read those files. Instead, when a
-subagent finishes, a type=="user" line carries a top-level toolUseResult block
-with a usage summary (status=="completed", plus agentId/resolvedModel/usage).
-We harvest one row per such block, keyed by agentId, with
-source="agent-aggregate". Reading the subagent files as well would count a
-completed subagent twice. Async launches (status=="async_launched", no usage)
-are skipped, and they never get a completed block, so their usage is not
-harvested at all: a known undercount.
+type=="assistant" lines. Claude Code writes each one's turns to
+<session>/subagents/agent-<agentId>.jsonl, nested agents included. Those lines
+have the same shape and carry the parent's sessionId, so they are read like the
+session file and attributed to the session's account. A fork's file opens with
+a copy of the parent's last response under the same message.id; the uid
+dedupes it.
+
+When a subagent finishes in the foreground, the parent gets a type=="user" line
+with a toolUseResult block (status=="completed", agentId, resolvedModel,
+usage). That usage is the agent's last response only, not its total. It is
+harvested (keyed by agentId, source="agent-aggregate") only when the agent's
+own transcript is absent, as with Claude Code versions that did not write one.
+An agent whose aggregate the ledger already holds is not read from its file,
+which would count that last response twice. Background launches
+(status=="async_launched") never get a completed block; their file is their
+only record.
 
 Each run also reconciles: any already-stored row whose session has since become
 attributable is back-filled, so attribution is correct even if a prompt's history
@@ -224,6 +230,32 @@ def session_index(roots):
     return {sid: ident for sid, (_, ident) in best.items()}
 
 
+def transcripts(projects_dir):
+    """Session transcripts under one projects dir, and their agents' transcripts.
+
+    <project>/<session>.jsonl is a session; <project>/<session>/subagents/
+    agent-<agentId>.jsonl is an agent it launched. Nothing else under a session
+    dir is a transcript. Sorted, so a session is read before its agents.
+    """
+    return sorted(
+        glob.glob(os.path.join(projects_dir, "*", "*.jsonl"))
+        + glob.glob(os.path.join(projects_dir, "*", "*", "subagents", "agent-*.jsonl")))
+
+
+def _agent_of(path):
+    """agentId of a subagent transcript; None for a session transcript."""
+    if os.path.basename(os.path.dirname(path)) != "subagents":
+        return None
+    return os.path.basename(path)[len("agent-"):-len(".jsonl")]
+
+
+def _subagents_dir(path):
+    """Where agents launched from this transcript keep theirs."""
+    if _agent_of(path):
+        return os.path.dirname(path)
+    return os.path.join(path[:-len(".jsonl")], "subagents")
+
+
 def transcript_dirs(roots):
     """De-duplicated realpath'd projects dirs (the shared store collapses to one)."""
     seen, dirs = set(), []
@@ -248,12 +280,22 @@ def harvest():
     seen_mtime = state.get("file_mtime", {})
     new_mtime = dict(seen_mtime)
 
+    con = ledger.connect()
+    # Rows stored before responses were keyed on message.id carry
+    # claude-code:<line-uuid> uids, so a re-read of an older transcript would
+    # not collide with them. requestId is one per API response: skip any
+    # response whose requestId the ledger already holds, under whatever uid.
+    known = {r[0] for r in con.execute(
+        "SELECT DISTINCT request_id FROM usage WHERE harness=? "
+        "AND source='session-file' AND request_id IS NOT NULL", (HARNESS,))}
+    # Agents counted from their toolUseResult before agent files were read.
+    agg_prefix = f"{HARNESS}:agent:"
+    stored_agents = {r[0][len(agg_prefix):] for r in con.execute(
+        "SELECT uid FROM usage WHERE harness=? AND source='agent-aggregate'", (HARNESS,))}
+
     rows = []
     for d in dirs:
-        # Non-recursive on purpose: <session>/subagents/agent-*.jsonl is not
-        # read, because the completed toolUseResult aggregate below already
-        # covers those agents (see the module docstring).
-        for path in sorted(glob.glob(os.path.join(d, "*", "*.jsonl"))):
+        for path in transcripts(d):
             try:
                 mtime = os.path.getmtime(path)
             except OSError:
@@ -261,6 +303,9 @@ def harvest():
             if seen_mtime.get(path) == mtime:
                 continue  # unchanged; dedup still covers re-reads
             new_mtime[path] = mtime
+            if _agent_of(path) in stored_agents:
+                continue  # its aggregate is stored; the file would repeat its last response
+            subagents = _subagents_dir(path)
             try:
                 fh = open(path, errors="replace")
             except OSError:
@@ -322,6 +367,8 @@ def harvest():
                         agent_id = tur.get("agentId")
                         if not isinstance(au, dict) or not agent_id:
                             continue
+                        if os.path.isfile(os.path.join(subagents, f"agent-{agent_id}.jsonl")):
+                            continue  # read from the agent's transcript instead
                         inp, out, cr, cw = _usage_tokens(au)
                         if inp + out + cr + cw == 0:
                             continue
@@ -355,14 +402,6 @@ def harvest():
                         })
             rows.extend(responses.values())
 
-    con = ledger.connect()
-    # Rows stored before responses were keyed on message.id carry
-    # claude-code:<line-uuid> uids, so a re-read of an older transcript would
-    # not collide with them. requestId is one per API response: skip any
-    # response whose requestId the ledger already holds, under whatever uid.
-    known = {r[0] for r in con.execute(
-        "SELECT DISTINCT request_id FROM usage WHERE harness=? "
-        "AND source='session-file' AND request_id IS NOT NULL", (HARNESS,))}
     fresh = [r for r in rows
              if r["source"] != "session-file" or r["request_id"] not in known]
     inserted = ledger.insert_usage(con, fresh)

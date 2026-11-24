@@ -2,9 +2,11 @@
 
 Covers two real bugs found via live-transcript inspection on this machine:
 
-1. Subagent ("Agent" tool) usage never harvested -- subagents don't get their
-   own transcript lines (isSidechain is always false); their aggregate usage
-   only shows up in a type=="user" line's top-level toolUseResult block.
+1. Subagent ("Agent" tool) usage never harvested -- subagents don't get
+   lines in the parent transcript; a completed one shows up there only as a
+   type=="user" line's top-level toolUseResult block. These tests cover that
+   aggregate when the agent has no transcript of its own; see
+   test_claude_code_subagents.py for agents that do.
 2. Multi-iteration/fallback usage collapse -- a message.usage.iterations array
    (e.g. an overload retry: "message" attempt then "fallback_message" retry)
    folds multiple billed API attempts under one transcript line, but the
