@@ -65,8 +65,12 @@ keep a re-read of an older transcript from adding a second copy beside those row
 The hard part is **attribution**: Claude Code keeps all transcripts
 in one shared store regardless of which account is active, so the collector reconstructs *which account ran
 each session* from every profile's own `history.jsonl` (which lists the `sessionId`s prompted under that
-profile). It scans `~/.claude` plus `~/.claude-profiles/*/.claude` (override via `CLAUDE_PROFILES_GLOB` /
-`CLAUDE_CONFIG_ROOTS`) and stamps each row with `account` (email), `subscription` (max/team/…), and a
+profile). It scans `~/.claude`, `~/.claude-profiles/*/.claude`, any `~/.claude-*` directory holding a
+`history.jsonl` or `.claude.json` (config dirs a shell hook selects through `CLAUDE_CONFIG_DIR`), and
+`$CLAUDE_CONFIG_DIR` if exported (override via `CLAUDE_PROFILES_GLOB` / `CLAUDE_CONFIG_ROOTS`). A root's
+account comes from its own `.claude.json`, falling back to the one beside it, and its plan from
+`.credentials.json`, falling back to the account's `organizationType` when the token is in the macOS
+Keychain. It stamps each row with `account` (email), `subscription` (max/team/…), and a
 friendly `org`. Cost is left 0 (flat-rate seats aren't metered per token). See [DESIGN.md §3.2](../DESIGN.md).
 
 ### `opencode.py` — OpenCode
