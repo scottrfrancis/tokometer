@@ -111,16 +111,22 @@ def extract_usage(payload):
             out["cache_write_tokens"] = int(u.get("cache_creation_input_tokens") or 0)
             out["cache_read_tokens"] = int(u.get("cache_read_input_tokens") or 0)
         elif "prompt_tokens" in u or "completion_tokens" in u:  # OpenAI
-            out["input_tokens"] = int(u.get("prompt_tokens") or 0)
-            out["output_tokens"] = int(u.get("completion_tokens") or 0)
-            # o1/o3-class models routed through Copilot carry these nested
-            # detail blocks; mirror how the Anthropic branch above pulls its
-            # cache fields out of the top-level usage dict. Absent on older/
-            # simpler payloads, so default to 0 rather than KeyError.
-            comp_details = u.get("completion_tokens_details") or {}
-            out["reasoning_tokens"] = int(comp_details.get("reasoning_tokens") or 0)
+            # o1/o3-class models routed through Copilot carry nested detail
+            # blocks (absent on older/simpler payloads, so default to 0).
+            # OpenAI counts cached_tokens inside prompt_tokens and
+            # reasoning_tokens inside completion_tokens; the ledger sums
+            # input, output, cache and reasoning, so split the subsets out
+            # to keep the columns adding up to the API's total_tokens.
+            prompt = int(u.get("prompt_tokens") or 0)
+            completion = int(u.get("completion_tokens") or 0)
             prompt_details = u.get("prompt_tokens_details") or {}
-            out["cache_read_tokens"] = int(prompt_details.get("cached_tokens") or 0)
+            comp_details = u.get("completion_tokens_details") or {}
+            cached = min(int(prompt_details.get("cached_tokens") or 0), prompt)
+            reasoning = min(int(comp_details.get("reasoning_tokens") or 0), completion)
+            out["input_tokens"] = prompt - cached
+            out["cache_read_tokens"] = cached
+            out["output_tokens"] = completion - reasoning
+            out["reasoning_tokens"] = reasoning
     bmetrics = d.get("amazon-bedrock-invocationMetrics")
     if isinstance(bmetrics, dict):
         out.setdefault("input_tokens", int(bmetrics.get("inputTokenCount") or 0))
