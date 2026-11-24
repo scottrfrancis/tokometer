@@ -205,8 +205,10 @@ WHERE m.created_at > :last_harvest_epoch;
 - **Source (transcripts):** `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl` — each
   `type=="assistant"` line carries `message.usage` with `input_tokens`, `output_tokens`,
   `cache_read_input_tokens`, `cache_creation_input_tokens`, plus top-level `uuid`, `requestId`,
-  `sessionId`, `cwd`, `timestamp`. One ledger row per assistant message, dedup keyed on the
-  message `uuid`; files are skipped on unchanged mtime (high-water in `state/claude-code.json`).
+  `sessionId`, `cwd`, `timestamp`. Claude Code writes one line per content block of a response,
+  each with its own `uuid` but a shared `message.id` and usage, so there is one ledger row per API
+  response, keyed on `message.id` (then `requestId`, then the line `uuid`); files are skipped on
+  unchanged mtime (high-water in `state/claude-code.json`).
   Thinking tokens are folded into `output_tokens` (so `reasoning_tokens=0`); `<synthetic>` lines
   carry no usage and are dropped by the zero-token guard. Honors `CLAUDE_CONFIG_DIR` and
   `CLAUDE_PROJECTS_GLOB`.

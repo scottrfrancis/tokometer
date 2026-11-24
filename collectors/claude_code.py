@@ -24,8 +24,12 @@ Identity per root:
 
 Transcripts are read ONCE from the (de-duplicated, realpath'd) shared projects
 dir. type=="assistant" lines carry message.usage {input_tokens, output_tokens,
-cache_read_input_tokens, cache_creation_input_tokens}; one ledger row per message
-(dedup on message uuid). Thinking folds into output_tokens (reasoning_tokens=0);
+cache_read_input_tokens, cache_creation_input_tokens}; one ledger row per API
+response. Claude Code writes one line per content block of a response (thinking,
+text, tool_use). Those lines share message.id, requestId and an identical usage
+block, but each has its own uuid, so rows are keyed on message.id (then
+requestId, then the line uuid) and a file's lines for one response collapse to
+the last one seen. Thinking folds into output_tokens (reasoning_tokens=0);
 `<synthetic>`/empty turns are dropped by the zero-token guard. cost_usd stays 0
 (flat-rate seats; not metered).
 
@@ -36,15 +40,17 @@ usage fields mirror only the LAST iteration, so when iterations is present we
 sum input/output/cache tokens across all of them instead of trusting the
 top-level fields.
 
-Subagents (the "Agent" tool) never get their own transcript lines -- isSidechain
-is always false on this machine, so a delegated subagent's turns are invisible
-to the type=="assistant" scan above. When a subagent finishes, a type=="user"
-line appears carrying a top-level toolUseResult block with an AGGREGATE usage
-summary for the whole subagent run (status=="completed", plus agentId/
-resolvedModel/usage). We harvest one additional row per such block, keyed by
-agentId, with source="agent-aggregate" so it's distinguishable from per-message
-rows. Async launches (status=="async_launched", no usage yet) are skipped --
-nothing in current transcript data ties them to their eventual completion line.
+Subagents (the "Agent" tool) do not appear in the session transcript's
+type=="assistant" lines. Newer Claude Code versions write each subagent's turns
+to <session>/subagents/agent-<agentId>.jsonl; the transcript glob in harvest()
+is deliberately non-recursive and does not read those files. Instead, when a
+subagent finishes, a type=="user" line carries a top-level toolUseResult block
+with a usage summary (status=="completed", plus agentId/resolvedModel/usage).
+We harvest one row per such block, keyed by agentId, with
+source="agent-aggregate". Reading the subagent files as well would count a
+completed subagent twice. Async launches (status=="async_launched", no usage)
+are skipped, and they never get a completed block, so their usage is not
+harvested at all: a known undercount.
 
 Each run also reconciles: any already-stored row whose session has since become
 attributable is back-filled, so attribution is correct even if a prompt's history
@@ -96,6 +102,17 @@ def _usage_tokens(u):
         int(u.get("cache_read_input_tokens") or 0),
         int(u.get("cache_creation_input_tokens") or 0),
     )
+
+
+def _response_key(o):
+    """Dedup key for an assistant line: the API response it belongs to.
+
+    Claude Code writes one line per content block (thinking, text, tool_use).
+    The lines share message.id and requestId but each has its own uuid, so the
+    uuid alone would store one response once per block.
+    """
+    msg = o.get("message") or {}
+    return msg.get("id") or o.get("requestId") or o.get("uuid")
 
 
 def config_roots():
@@ -196,8 +213,10 @@ def harvest():
     new_mtime = dict(seen_mtime)
 
     rows = []
-    read = 0
     for d in dirs:
+        # Non-recursive on purpose: <session>/subagents/agent-*.jsonl is not
+        # read, because the completed toolUseResult aggregate below already
+        # covers those agents (see the module docstring).
         for path in sorted(glob.glob(os.path.join(d, "*", "*.jsonl"))):
             try:
                 mtime = os.path.getmtime(path)
@@ -210,6 +229,7 @@ def harvest():
                 fh = open(path, errors="replace")
             except OSError:
                 continue
+            responses = {}  # response key -> row; the last line of a response wins
             with fh:
                 for line in fh:
                     line = line.strip()
@@ -229,12 +249,13 @@ def harvest():
                         ts = ledger.normalize_iso(o.get("timestamp"))
                         if ledger.older_than_retention(ts):
                             continue
+                        key = _response_key(o)
+                        if not key:
+                            continue  # nothing to dedupe on
                         sid = o.get("sessionId")
                         account, subscription, org = sess.get(sid, (None, None, None))
-                        uid = o.get("uuid") or f"{sid}:{o.get('requestId')}"
-                        read += 1
-                        rows.append({
-                            "uid": f"{HARNESS}:{uid}",
+                        responses[key] = {
+                            "uid": f"{HARNESS}:{key}",
                             "ts": ts,
                             "harness": HARNESS,
                             "provider": PROVIDER,
@@ -250,12 +271,12 @@ def harvest():
                             "cost_usd": 0.0,
                             "source": "session-file",
                             "confidence": "exact",
-                            "raw_ref": f"{path}#{uid}",
+                            "raw_ref": f"{path}#{key}",
                             "cwd": o.get("cwd"),
                             "account": account,
                             "subscription": subscription,
                             "org": org,
-                        })
+                        }
 
                     elif otype == "user":
                         tur = o.get("toolUseResult")
@@ -273,7 +294,6 @@ def harvest():
                             continue
                         sid = o.get("sessionId")
                         account, subscription, org = sess.get(sid, (None, None, None))
-                        read += 1
                         rows.append({
                             "uid": f"{HARNESS}:agent:{agent_id}",
                             "ts": ts,
@@ -297,13 +317,24 @@ def harvest():
                             "subscription": subscription,
                             "org": org,
                         })
+            rows.extend(responses.values())
 
     con = ledger.connect()
-    inserted = ledger.insert_usage(con, rows)
+    # Rows stored before responses were keyed on message.id carry
+    # claude-code:<line-uuid> uids, so a re-read of an older transcript would
+    # not collide with them. requestId is one per API response: skip any
+    # response whose requestId the ledger already holds, under whatever uid.
+    known = {r[0] for r in con.execute(
+        "SELECT DISTINCT request_id FROM usage WHERE harness=? "
+        "AND source='session-file' AND request_id IS NOT NULL", (HARNESS,))}
+    fresh = [r for r in rows
+             if r["source"] != "session-file" or r["request_id"] not in known]
+    inserted = ledger.insert_usage(con, fresh)
     reattr = reconcile(con, sess)
     con.close()
 
     ledger.save_state(HARNESS, {"file_mtime": new_mtime})
+    read = len(rows)
     matched = sum(1 for r in rows if r["org"] is not None)
     print(f"[{HARNESS}] {len(roots)} roots, {len(sess)} mapped sessions; "
           f"{read} read ({matched} attributed), {inserted} new, {reattr} back-filled",

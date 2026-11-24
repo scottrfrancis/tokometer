@@ -79,7 +79,7 @@ def test_plain_single_iteration_message_still_works(tmp_tokometer, tmp_path, mon
     rows = _rows(tmp_tokometer)
     assert len(rows) == 1
     r = rows[0]
-    assert r["uid"] == "claude-code:uuid-normal"
+    assert r["uid"] == "claude-code:req-1"  # no message.id: falls back to requestId
     assert r["source"] == "session-file"
     assert r["model"] == "claude-sonnet-5"
     assert r["input_tokens"] == 10
@@ -132,7 +132,7 @@ def test_multi_iteration_message_sums_across_iterations(tmp_tokometer, tmp_path,
     rows = _rows(tmp_tokometer)
     assert len(rows) == 1
     r = rows[0]
-    assert r["uid"] == "claude-code:uuid-multi"
+    assert r["uid"] == "claude-code:req-2"
     assert r["input_tokens"] == 1 + 4
     assert r["output_tokens"] == 225 + 11467
     assert r["cache_read_tokens"] == 50 + 50
@@ -272,8 +272,8 @@ def test_mixed_transcript_harvests_all_expected_rows_and_dedupes_on_rerun(
     assert len(rows) == 3
     uids = {r["uid"] for r in rows}
     assert uids == {
-        "claude-code:uuid-normal",
-        "claude-code:uuid-multi",
+        "claude-code:req-1",
+        "claude-code:req-2",
         "claude-code:agent:af2d78baf4b957523",
     }
 

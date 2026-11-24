@@ -15,7 +15,7 @@ All of them go through [`lib/ledger.py`](../lib/ledger.py), which gives them a u
 
 - **Write via `insert_usage(con, rows)`** using the `USAGE_COLS` keys. Token collectors write the
   `usage` table; the two code-metric collectors write their own tables (see below).
-- **Deterministic `uid`** per row (e.g. `claude-code:<message-uuid>`) so re-harvesting is idempotent —
+- **Deterministic `uid`** per row (e.g. `claude-code:<message.id>`) so re-harvesting is idempotent —
   `INSERT OR IGNORE` for immutable records, `on_conflict="replace"` for live totals that grow during a
   session (Droid).
 - **`source`** ∈ `session-file | cli-json | admin-api | scrape | self-tally` and
@@ -48,8 +48,21 @@ All of them go through [`lib/ledger.py`](../lib/ledger.py), which gives them a u
 ## Token collectors
 
 ### `claude_code.py` — Claude Code (multi-account)
-Reads each session transcript (`type=="assistant"` lines carry `message.usage`), one ledger row per
-message, deduped on the message `uuid`. The hard part is **attribution**: Claude Code keeps all transcripts
+Reads each session transcript (`type=="assistant"` lines carry `message.usage`), one ledger row per API
+response. Claude Code writes one transcript line per content block of a response (`thinking`, `text`,
+`tool_use`); those lines share `message.id`, `requestId` and an identical `usage`, but each has its own
+`uuid`. Rows are therefore keyed on `message.id`, falling back to `requestId` and then the line `uuid`.
+Subagent transcripts (`<session>/subagents/agent-*.jsonl`) are not read; a completed subagent is counted
+once, from the `toolUseResult` aggregate in the parent session. Async launches never get that aggregate,
+so their usage is missing from the ledger.
+
+Rows stored before the switch to response keys hold one row per content block under
+`claude-code:<line-uuid>` uids, about 2.3–2.5× the real figure, and are left as they are. Claude Code
+totals for periods before the upgrade stay overcounted; responses harvested after it are counted once. To
+keep a re-read of an older transcript from adding a second copy beside those rows, a response whose
+`requestId` the ledger already holds is skipped.
+
+The hard part is **attribution**: Claude Code keeps all transcripts
 in one shared store regardless of which account is active, so the collector reconstructs *which account ran
 each session* from every profile's own `history.jsonl` (which lists the `sessionId`s prompted under that
 profile). It scans `~/.claude` plus `~/.claude-profiles/*/.claude` (override via `CLAUDE_PROFILES_GLOB` /
