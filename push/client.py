@@ -11,6 +11,8 @@ Env:
   FLIGHTPLAN_INGEST_TOKEN  bearer token for this device (write scope)
   TOKOMETER_HOME           default ~/.tokometer
   FLIGHTPLAN_PUSH_BATCH    rows per POST (default 1000)
+  FLIGHTPLAN_PUSH_MAX_BATCHES  POSTs per kind per run (default 500); a run
+                           keeps sending until a kind is caught up
   TOKOMETER_HOST           pin the canonical host stamped on rows; defaults
                            to the short hostname, minus any mDNS "-N" suffix,
                            lowercased. See _host().
@@ -48,6 +50,7 @@ TOKOMETER_HOME = Path(os.path.expanduser(
 DB_PATH = TOKOMETER_HOME / "ledger.db"
 
 DEFAULT_BATCH = int(os.environ.get("FLIGHTPLAN_PUSH_BATCH", "1000"))
+DEFAULT_MAX_BATCHES = int(os.environ.get("FLIGHTPLAN_PUSH_MAX_BATCHES", "500"))
 SCHEMA_VERSION = 1
 
 
@@ -358,10 +361,32 @@ def _has_real_failure(results: list[dict]) -> bool:
     )
 
 
+def _drain_kind(con: sqlite3.Connection, *, kind: str, state: dict,
+                ingest_url: str, token: str, batch: int,
+                max_batches: int) -> PushResult:
+    """Push batches of one kind until it is caught up, a batch fails, or
+    max_batches is reached. One batch per 2-hourly run capped throughput at
+    batch x 12 rows a day, below what the collectors write."""
+    total = PushResult(kind=kind)
+    for _ in range(max_batches):
+        res = push_kind(con, kind=kind, state=state, ingest_url=ingest_url,
+                        token=token, batch=batch)
+        total.attempted += res.attempted
+        total.accepted += res.accepted
+        total.conflicted += res.conflicted
+        total.quarantined += res.quarantined
+        total.error = res.error
+        if res.error or res.attempted < batch:
+            break
+    return total
+
+
 def push_all(*, kinds: Iterable[str] | None = None,
              ingest_url: str | None = None,
              token: str | None = None,
-             db_path: Path | None = None) -> dict:
+             db_path: Path | None = None,
+             batch: int = DEFAULT_BATCH,
+             max_batches: int = DEFAULT_MAX_BATCHES) -> dict:
     ingest_url = ingest_url or os.environ.get("FLIGHTPLAN_INGEST_URL")
     token = token or os.environ.get("FLIGHTPLAN_INGEST_TOKEN")
     if not ingest_url or not token:
@@ -382,8 +407,9 @@ def push_all(*, kinds: Iterable[str] | None = None,
     con = sqlite3.connect(str(db_path), timeout=30)
     try:
         for kind in selected:
-            res = push_kind(con, kind=kind, state=state,
-                            ingest_url=ingest_url, token=token)
+            res = _drain_kind(con, kind=kind, state=state,
+                              ingest_url=ingest_url, token=token,
+                              batch=batch, max_batches=max_batches)
             results.append(res.to_dict())
             # 422 (quarantine) and missing-table (optional source) are not
             # recorded as failures -- the former is server-side validation, the
