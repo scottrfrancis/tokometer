@@ -329,3 +329,68 @@ def test_host_env_override_is_not_suffix_stripped(monkeypatch):
     monkeypatch.delenv("TOKOMETER_HOST", raising=False)
     monkeypatch.setenv("TOKOMETER_HOST", "rig-3")
     assert pc._host() == "rig-3"
+
+
+# ─── tokometer_usage row shape matches Beaufort's ingest model ─────────────
+#
+# Beaufort's TokometerUsageRow (services/ingest/models.py) ignores unknown
+# fields, so a column pushed under the wrong name is silently stored as NULL.
+# Its fields: ts, harness, model, account, session_id, cwd, input_tokens,
+# output_tokens, cache_read, cache_write, cost_usd, meta (plus uid, host and
+# schema_version from the row base).
+BEAUFORT_USAGE_FIELDS = {
+    "uid", "host", "schema_version", "ts", "harness", "model", "account",
+    "session_id", "cwd", "input_tokens", "output_tokens", "cache_read",
+    "cache_write", "cost_usd", "meta",
+}
+
+
+def _push_one_usage_row(mock_ingest, tmp_tokometer, **cols):
+    db = tmp_tokometer / "ledger.db"
+    con = sqlite3.connect(str(db))
+    row = {"uid": "omp:s1:e1", "ts": "2026-11-24T10:00:00Z", "harness": "omp",
+           "model": "Qwen3.8-Flash-Next-oQ4e-mtp", "input_tokens": 120,
+           "output_tokens": 30, "cache_read_tokens": 4096, "cache_write_tokens": 64,
+           "source": "session-file", "confidence": "exact", **cols}
+    names = ", ".join(row)
+    con.execute(f"INSERT INTO usage ({names}) VALUES ({', '.join('?' for _ in row)})",
+                tuple(row.values()))
+    con.commit()
+    from push import state as ps
+    mock_ingest.response_body = {"accepted": 1, "conflicted": 0}
+    res = pc.push_kind(con, kind="tokometer_usage", state=ps.load(),
+                       ingest_url=mock_ingest.url, token="t")
+    con.close()
+    assert res.error is None
+    (pushed,) = mock_ingest.requests[0][1]["rows"]
+    return pushed
+
+
+def test_usage_rows_use_beaufort_field_names(mock_ingest, tmp_tokometer):
+    pushed = _push_one_usage_row(mock_ingest, tmp_tokometer)
+
+    assert set(pushed) <= BEAUFORT_USAGE_FIELDS, set(pushed) - BEAUFORT_USAGE_FIELDS
+    assert pushed["cache_read"] == 4096
+    assert pushed["cache_write"] == 64
+
+
+def test_usage_row_meta_carries_provider_plan_and_org(mock_ingest, tmp_tokometer):
+    """Beaufort has no provider/subscription/org columns; they travel in meta,
+    with the token and confidence fields its columns don't cover."""
+    pushed = _push_one_usage_row(
+        mock_ingest, tmp_tokometer, provider="omlx", account="omlx",
+        subscription="self-hosted", org="Local", reasoning_tokens=7, credits=0)
+
+    assert pushed["account"] == "omlx"
+    assert pushed["meta"] == {
+        "provider": "omlx", "subscription": "self-hosted", "org": "Local",
+        "reasoning_tokens": 7, "credits": 0,
+        "source": "session-file", "confidence": "exact",
+    }
+
+
+def test_usage_row_meta_omits_unknown_values(mock_ingest, tmp_tokometer):
+    pushed = _push_one_usage_row(mock_ingest, tmp_tokometer, provider="anthropic")
+
+    assert pushed["meta"]["provider"] == "anthropic"
+    assert "subscription" not in pushed["meta"] and "org" not in pushed["meta"]

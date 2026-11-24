@@ -80,7 +80,9 @@ KIND_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
         "usage", "tokometer-usage",
         ("uid", "ts", "harness", "model", "account", "session_id", "cwd",
          "input_tokens", "output_tokens", "cache_read_tokens",
-         "cache_write_tokens", "cost_usd"),
+         "cache_write_tokens", "cost_usd",
+         "provider", "subscription", "org", "reasoning_tokens", "credits",
+         "source", "confidence"),
     ),
     "session_log": (
         "session_log_raw", "session-logs",
@@ -116,6 +118,19 @@ COLUMN_REMAPS: dict[str, dict[str, str]] = {
         "project": "project_raw",
         "ts": "created_ts",          # b's note timestamp
     },
+    # Beaufort's TokometerUsageRow names these cache_read / cache_write and
+    # ignores unknown fields, so the tokometer names would arrive as NULL.
+    "tokometer_usage": {
+        "cache_read_tokens": "cache_read",
+        "cache_write_tokens": "cache_write",
+    },
+}
+
+# Columns with no bronze.* counterpart, shipped in the row's `meta` JSON
+# instead. NULLs are left out.
+META_COLUMNS: dict[str, tuple[str, ...]] = {
+    "tokometer_usage": ("provider", "subscription", "org", "reasoning_tokens",
+                        "credits", "source", "confidence"),
 }
 
 
@@ -230,6 +245,7 @@ def _fetch_rows(con: sqlite3.Connection, kind: str, since_rowid: int | None,
     """
     sqlite_table, _, cols = KIND_TABLES[kind]
     remap = COLUMN_REMAPS.get(kind, {})
+    meta_cols = META_COLUMNS.get(kind, ())
     col_list = ", ".join(cols)
     if since_rowid is not None:
         sql = (
@@ -250,9 +266,16 @@ def _fetch_rows(con: sqlite3.Connection, kind: str, since_rowid: int | None,
     for row in cur:
         max_rowid = row[0]  # rowid is the first selected column, ascending
         rec = {}
+        meta = {}
         for i, c in enumerate(cols):
-            target = remap.get(c, c)
-            rec[target] = row[i + 1]  # +1: skip the leading rowid column
+            value = row[i + 1]  # +1: skip the leading rowid column
+            if c in meta_cols:
+                if value is not None:
+                    meta[c] = value
+            else:
+                rec[remap.get(c, c)] = value
+        if meta_cols:
+            rec["meta"] = meta
         # Some bronze.* tables require `host`; for usage rows we set it from
         # this device's hostname if missing.
         rec.setdefault("host", _host())
