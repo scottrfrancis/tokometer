@@ -208,7 +208,11 @@ WHERE m.created_at > :last_harvest_epoch;
   `sessionId`, `cwd`, `timestamp`. Claude Code writes one line per content block of a response,
   each with its own `uuid` but a shared `message.id` and usage, so there is one ledger row per API
   response, keyed on `message.id` (then `requestId`, then the line `uuid`); files are skipped on
-  unchanged mtime (high-water in `state/claude-code.json`).
+  unchanged mtime (high-water in `state/claude-code.json`). Each agent a session launches writes
+  `<session-id>/subagents/agent-<agentId>.jsonl` with the parent's `sessionId`; those are read the
+  same way. The parent's `toolUseResult` for a completed agent holds only its last response, so it
+  is a fallback for when the agent's file is absent. Subagents held 29% of Claude Code tokens on
+  disk on 2026-11-24: 51% of the Employer seat's November tokens and 10% of the personal seat's.
   Thinking tokens are folded into `output_tokens` (so `reasoning_tokens=0`); `<synthetic>` lines
   carry no usage and are dropped by the zero-token guard. Honors `CLAUDE_CONFIG_DIR` and
   `CLAUDE_PROJECTS_GLOB`.

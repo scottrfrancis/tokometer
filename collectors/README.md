@@ -52,9 +52,13 @@ Reads each session transcript (`type=="assistant"` lines carry `message.usage`),
 response. Claude Code writes one transcript line per content block of a response (`thinking`, `text`,
 `tool_use`); those lines share `message.id`, `requestId` and an identical `usage`, but each has its own
 `uuid`. Rows are therefore keyed on `message.id`, falling back to `requestId` and then the line `uuid`.
-Subagent transcripts (`<session>/subagents/agent-*.jsonl`) are not read; a completed subagent is counted
-once, from the `toolUseResult` aggregate in the parent session. Async launches never get that aggregate,
-so their usage is missing from the ledger.
+Each agent a session launches (the Agent tool, nested agents included) has its own transcript at
+`<session>/subagents/agent-<agentId>.jsonl`. Its lines carry the parent's `sessionId`, so they are read
+the same way and attributed to the session's account. A completed agent's `toolUseResult` in the parent
+holds only the agent's last response, so it is counted only when the agent's file is absent; an agent
+whose aggregate row is already stored is not re-read from its file. On this machine on 2026-11-24,
+subagents held 29% of the Claude Code tokens on disk, and the share differed by account (51% of one
+seat's November tokens, 10% of another's), so leaving them out skewed the mix.
 
 Rows stored before the switch to response keys hold one row per content block under
 `claude-code:<line-uuid>` uids, about 2.3–2.5× the real figure, and are left as they are. Claude Code

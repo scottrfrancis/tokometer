@@ -1,4 +1,4 @@
-"""Per-response dedup for collectors/claude_code.py, and the ledger migration.
+"""Per-response dedup for collectors/claude_code.py.
 
 Claude Code writes one transcript line per content block of an assistant
 response (thinking, text, tool_use). Every line carries its own `uuid` but the
@@ -153,8 +153,9 @@ def test_line_with_no_response_key_yields_no_row(tmp_tokometer, tmp_path, monkey
 
 
 def test_last_line_of_a_response_wins_within_a_file(tmp_tokometer, tmp_path, monkeypatch):
-    """Usage is identical across a response's lines today. If a client ever
-    streams partial usage, the last line carries the final count."""
+    """Subagent transcripts sometimes give a response's early lines partial
+    usage (8 of 6,625 responses on a real machine); the last line carries the
+    final count."""
     first = _assistant(uuid="l1", requestId="r1")
     first["message"] = {"id": "msg_stream", "model": "m", "usage": {"output_tokens": 5}}
     last = _assistant(uuid="l2", requestId="r1")
@@ -167,26 +168,6 @@ def test_last_line_of_a_response_wins_within_a_file(tmp_tokometer, tmp_path, mon
     (r,) = _rows(tmp_tokometer)
     assert r["uid"] == "claude-code:msg_stream"
     assert r["output_tokens"] == 50
-
-
-def test_subagent_transcripts_are_not_read(tmp_tokometer, tmp_path, monkeypatch):
-    """Locks in the non-recursive glob: <session>/subagents/agent-<id>.jsonl is
-    not harvested, so a completed toolUseResult aggregate for the same agentId
-    is that agent's only row and is not double-counted."""
-    root = tmp_path / "cfg"
-    proj = root / "projects" / "proj"
-    agg = {"type": "user", "sessionId": "s", "timestamp": "2026-11-24T10:00:00Z", "cwd": "/repo",
-           "toolUseResult": {"status": "completed", "agentId": "abc", "resolvedModel": "m",
-                             "usage": {"input_tokens": 1, "output_tokens": 1}}}
-    _write_lines(proj / "s.jsonl", [agg])
-    sub = _assistant(uuid="sub-line", requestId="req-sub")
-    sub["message"]["id"] = "msg_sub"
-    _write_lines(proj / "s" / "subagents" / "agent-abc.jsonl", [sub])
-    monkeypatch.setenv("CLAUDE_CONFIG_ROOTS", str(root))
-
-    assert cc.harvest() == 1
-    (r,) = _rows(tmp_tokometer)
-    assert r["uid"] == "claude-code:agent:abc"
 
 
 # --- ledgers holding rows from the line-uuid collector ------------------------
