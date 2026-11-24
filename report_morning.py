@@ -193,18 +193,22 @@ def headline(con):
 
     L += ["", "_by model (subtotal under harness):_", ""]
     mrows = q(con, f"""
-        SELECT {HKEY} hk, COALESCE(NULLIF(model,''),'(unspecified)') model,
+        SELECT {HKEY} hk, COALESCE(NULLIF(provider,''),'') p,
+               COALESCE(NULLIF(model,''),'(unspecified)') model,
                SUM(total_tokens) tot, COUNT(*) n, MAX(confidence) conf
         FROM usage {WHERE_MTD}
-        GROUP BY hk, model
+        GROUP BY hk, p, model
         ORDER BY hk, tot DESC
     """)
     cur_h = None
-    for h, m, tot, n, conf in mrows:
+    for h, p, m, tot, n, conf in mrows:
         if h != cur_h:
             L.append(f"- **{h}**")
             cur_h = h
-        L.append(f"  - {m} -- {human(tot)} ({n} recs, {conf})")
+        # Self-hosted servers serve the same model names; name the provider
+        # (anthropic is left off: claude-* names already say it).
+        label = f"{m} ({p})" if p and p != "anthropic" else m
+        L.append(f"  - {label} -- {human(tot)} ({n} recs, {conf})")
     L.append("")
     return "\n".join(L)
 

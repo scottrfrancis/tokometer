@@ -176,21 +176,27 @@ def friendly_org(org_name):
     return "Personal"
 
 
-def resolve_identity(root):
-    """(account_email, subscription_tier, org_label) for one config root."""
-    creds = _load_json(os.path.join(root, ".credentials.json"))
-    oauth = creds.get("claudeAiOauth") or {}
-    acct = {}
-    # <root>/.claude.json first: with CLAUDE_CONFIG_DIR set, Claude Code keeps
-    # the account record there, and any <home>/.claude.json beside the root is
-    # left over from before. Without it (the default ~/.claude), the record is
-    # ~/.claude.json.
+def account_record(root):
+    """The oauthAccount record for one config root, or {}.
+
+    <root>/.claude.json first: with CLAUDE_CONFIG_DIR set, Claude Code keeps
+    the account record there, and any <home>/.claude.json beside the root is
+    left over from before. Without it (the default ~/.claude), the record is
+    ~/.claude.json.
+    """
     for cand in (os.path.join(root, ".claude.json"),
                  os.path.join(os.path.dirname(root), ".claude.json")):
         j = _load_json(cand)
         if j.get("oauthAccount"):
-            acct = j["oauthAccount"]
-            break
+            return j["oauthAccount"]
+    return {}
+
+
+def resolve_identity(root):
+    """(account_email, subscription_tier, org_label) for one config root."""
+    creds = _load_json(os.path.join(root, ".credentials.json"))
+    oauth = creds.get("claudeAiOauth") or {}
+    acct = account_record(root)
     subscription = (oauth.get("subscriptionType")
                     or ORG_TYPE_SUBSCRIPTION.get(acct.get("organizationType")))
     if not subscription and (creds.get("apiKey") or os.environ.get("ANTHROPIC_API_KEY")):

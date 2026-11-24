@@ -302,11 +302,27 @@ self-service truth may be the vendor's web dashboard. A nightly headless scrape:
 > laptop can trip endpoint security and may bump acceptable-use lines. Treat Playwright as the
 > path of last resort, run it visibly the first few times, and prefer an admin-issued export.
 
-### 3.7 Local (MLX / Ollama)
+### 3.7 Local (MLX / Ollama / vLLM / llama.cpp)
 
-Free, so "budget" is uncapped — you only harvest for the report's completeness. Since OpenCode is
-the client hitting local models, **its** `opencode.db` already has these tokens (§3.1). Nothing
-extra to do unless you call the local servers outside OpenCode.
+Free, so "budget" is uncapped; you harvest for the report's completeness and the account mix. The
+clients that hit local models record the tokens: OpenCode in `opencode.db` (§3.1), OMP in its
+session transcripts (§3.8). Calls to the local servers from anything else are not counted.
+
+### 3.8 OMP — exact, provider-based
+
+- **Implemented:** `collectors/omp.py` (harness `omp`).
+- **Source:** `~/.omp/agent/sessions/<cwd-slug>/<ts>_<uuid>.jsonl`. Assistant `message` records
+  carry each turn's `usage` (`input`, `output`, `cacheRead`, `cacheWrite`, `totalTokens`) with
+  `provider` and `model`; `model_usage` records carry side calls (titles, recaps, compaction,
+  composer prediction). `input` excludes cache reads and `output` includes reasoning, so
+  `reasoning_tokens` stays 0. Rows are keyed `omp:<session>:<record id>`; a file is re-read when
+  its mtime changes.
+- **Who paid:** a provider in `~/.omp/agent/models.yml` whose `baseUrl` is on this machine, the
+  LAN or the tailnet is a self-hosted server: `account=<provider>`, `subscription=self-hosted`,
+  `org=Local`. A cloud provider OMP is logged in to takes that login's email (OMP's `agent.db`,
+  identity column only); for `anthropic`, plan and org come from the matching Claude Code account
+  record. Provider names are OMP's own, so one server reached by two routes (loopback on its host,
+  a LAN name elsewhere) shows under both names; the pushed `host` tells them apart.
 
 ### Collection summary
 
@@ -317,7 +333,8 @@ extra to do unless you call the local servers outside OpenCode.
 | Droid | session `*.jsonl` | ✅ if token field | per-session | Factory dashboard (scrape) |
 | Copilot CLI | session log `modelMetrics` | ✅ in/out/cache | per-session (CLI only) | org metrics API (admin) |
 | Cursor | none (request_id only) | ❌ local | request-count | Admin API (admin) / scrape |
-| Local | via OpenCode | ✅ | per-message | — |
+| OMP | session JSONL (+ side calls) | ✅ exact (+cache) | per-message | — |
+| Local | via OpenCode / OMP | ✅ | per-message | — |
 
 ---
 

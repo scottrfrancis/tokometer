@@ -393,11 +393,26 @@ def chart_hourly(con):
                          "Cursor/OpenCode/Copilot are per-event. Peak hour highlighted.")
 
 
+def _model_label(model, provider, width=26):
+    """Chart label for a model. Self-hosted servers serve the same model names
+    under different providers (dev-ai, omlx, llama.cpp, ...), so the provider
+    is shown, and kept when the name is shortened. Anthropic is left off:
+    claude-* names already say it."""
+    if not provider or provider == "anthropic":
+        return model[:width]
+    suffix = f" ({provider})"
+    room = width - len(suffix)
+    if len(model) > room:
+        model = model[:max(room - 1, 1)] + "…"
+    return model + suffix
+
+
 def chart_models(con):
-    rows = q(con, f"""SELECT {HKEY} hk, COALESCE(NULLIF(model,''),'(unspecified)') m,
+    rows = q(con, f"""SELECT {HKEY} hk, COALESCE(NULLIF(provider,''),'') p,
+                      COALESCE(NULLIF(model,''),'(unspecified)') m,
                       SUM(total_tokens) t FROM usage {where()}
-                      GROUP BY hk, m ORDER BY t DESC LIMIT 8""")
-    data = [(f"{m[:26]}", t, color(h)) for h, m, t in rows]
+                      GROUP BY hk, p, m ORDER BY t DESC LIMIT 8""")
+    data = [(_model_label(m, p), t, color(h)) for h, p, m, t in rows]
     return svg_hbar("Top models by tokens (MTD)", data)
 
 

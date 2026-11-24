@@ -8,11 +8,11 @@ TOKOMETER_HOME="${TOKOMETER_HOME:-$HOME/.tokometer}"
 [ -f "$TOKOMETER_HOME/tokometer.env" ] && . "$TOKOMETER_HOME/tokometer.env"
 PY="$(command -v python3)"
 
-ALL_HARNESSES="opencode droid copilot copilot_chat_log vscode_events copilot_vscode claude_code git_metrics gh_metrics cursor"
+ALL_HARNESSES="opencode omp droid copilot copilot_chat_log vscode_events copilot_vscode claude_code git_metrics gh_metrics cursor"
 ENABLED="${TOKOMETER_HARNESSES:-$ALL_HARNESSES}"
 is_enabled() { case " $ENABLED " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
-for h in opencode droid copilot copilot_chat_log vscode_events copilot_vscode claude_code git_metrics gh_metrics; do
+for h in opencode omp droid copilot copilot_chat_log vscode_events copilot_vscode claude_code git_metrics gh_metrics; do
   is_enabled "$h" || { echo "[$(date)] $h disabled (skipped)"; continue; }
   "$PY" "$TOKOMETER_HOME/collectors/${h}.py" \
     && echo "[$(date)] $h ok" \

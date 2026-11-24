@@ -26,7 +26,7 @@ picture. Here's what that looks like.
 
 ## Track all your token usage — across harnesses *and* accounts
 
-One normalized ledger across OpenCode, Claude Code, Droid, Copilot, and Cursor. The headline splits
+One normalized ledger across OpenCode, OMP, Claude Code, Droid, Copilot, and Cursor. The headline splits
 Claude Code **per account** (`claude-code · Personal`, `· Employer`, `· Client`) so subscription-by-subscription
 usage is never blended, and a **Claude limits** panel shows your rolling 5-hour / daily / weekly (and
 weekly-Opus) usage per account so you know where you stand. Exact vs. estimate is labeled throughout.
@@ -59,6 +59,7 @@ When does the work actually happen? Peak days and peak hours, at a glance.
 |---|---|---|---|
 | **Claude Code** | anthropic | session transcripts + per-account attribution | exact, per-message |
 | **OpenCode** | local/any | `opencode.db` message rows | exact, per-message |
+| **OMP** | self-hosted / any | session transcripts; self-hosted providers grouped as `Local` | exact, per-message |
 | **Droid** (Factory) | factory | session sidecars | exact, per-session |
 | **GitHub Copilot CLI** | github | session event logs | estimate (output-only) |
 | **Cursor** | cursor | dashboard scrape via Playwright *(optional)* | estimate |
@@ -113,8 +114,8 @@ The scheduled `daily.sh` harvests, rolls over the month, regenerates the HTML re
 ```sh
 # Which harnesses to harvest + show. Drop the ones you don't use: they leave the report
 # entirely (table, charts, advisories all follow this list).
-# Available: opencode droid copilot claude_code git_metrics gh_metrics cursor
-export TOKOMETER_HARNESSES="opencode claude_code git_metrics gh_metrics"
+# Available: opencode omp droid copilot claude_code git_metrics gh_metrics cursor
+export TOKOMETER_HARNESSES="opencode omp claude_code git_metrics gh_metrics"
 
 # Repos live here, scanned recursively (so nested <root>/<group>/<repo> layouts are covered).
 export TOKOMETER_GIT_ROOT="$HOME/workspace"

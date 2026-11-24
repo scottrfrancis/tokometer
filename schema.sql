@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS usage (
   uid           TEXT NOT NULL UNIQUE,     -- deterministic dedup key set by the collector
   ts            TEXT NOT NULL,            -- ISO-8601 UTC of the activity (not harvest time)
   harness       TEXT NOT NULL,            -- opencode|claude-code|droid|copilot|cursor|local
-  provider      TEXT,                     -- factory|cursor|github|anthropic|openai|ollama|mlx|...
+  provider      TEXT,                     -- factory|cursor|github|anthropic|openai|ollama|mlx|... (omp: its provider name, e.g. dev-ai|omlx|llama.cpp)
   model         TEXT,
   session_id    TEXT,
   request_id    TEXT,                     -- cursor join key when available

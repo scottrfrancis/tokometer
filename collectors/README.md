@@ -34,6 +34,7 @@ All of them go through [`lib/ledger.py`](../lib/ledger.py), which gives them a u
 | Collector | Harness | Provider | Source | Confidence | Key env |
 |---|---|---|---|---|---|
 | `opencode.py` | opencode | *(varies; per-message)* | `opencode.db` message rows | exact | `OPENCODE_DB` |
+| `omp.py` | omp | *(per-message; self-hosted or cloud)* | `~/.omp/agent/sessions/*/*.jsonl` | exact | `OMP_SESSIONS_DIR`, `OMP_MODELS_YML`, `OMP_AGENT_DB` |
 | `claude_code.py` | claude-code | anthropic | `~/.claude/**/projects/*.jsonl` transcripts | exact | `CLAUDE_CONFIG_DIR`, `CLAUDE_PROFILES_GLOB`, `CLAUDE_CONFIG_ROOTS` |
 | `droid.py` | droid | factory | `~/.factory/sessions/*/*.settings.json` sidecars | exact | `FACTORY_SESSIONS_GLOB` |
 | `copilot.py` | copilot | github | `~/.copilot/session-state/*/events.jsonl` | **estimate** (output-only) | `COPILOT_EVENTS_GLOB` |
@@ -80,6 +81,21 @@ friendly `org`. Cost is left 0 (flat-rate seats aren't metered per token). See [
 ### `opencode.py` — OpenCode
 Reads the `message` table of `opencode.db` (auto-located, or `OPENCODE_DB`). Each assistant message carries
 exact token counts and (sometimes) cost. Per-message, exact. High-water mark on `time_created`.
+
+### `omp.py` — OMP
+Reads OMP's session transcripts. Assistant `message` records are turns; `model_usage` records are side
+calls (titles, recaps, compaction, composer prediction), counted too. One row per record, keyed
+`omp:<session>:<record id>`, re-read when a file's mtime changes. OMP's `input` excludes cache reads and
+its `output` already includes reasoning, so `reasoning_tokens` stays 0.
+
+Attribution is by provider. Providers in `~/.omp/agent/models.yml` whose `baseUrl` is on this machine,
+the LAN or the tailnet (loopback, private and Tailscale addresses, `*.local`, bare host names) are
+self-hosted model servers: rows get `account=<provider>`, `subscription=self-hosted`, `org=Local`, so
+dev-ai, oMLX and llama.cpp each show as their own line in the account mix, with the models they served.
+For a cloud provider OMP is logged in to, the account is that login's email, read from the identity
+column of OMP's `agent.db` (never the credential); `anthropic` rows also take plan and org from the
+Claude Code account record with the same email and organization. Several logins for one provider leave
+the row unattributed.
 
 ### `droid.py` — Droid (Factory)
 Reads per-session `*.settings.json` sidecars under `~/.factory/sessions/`. Session totals **grow during
