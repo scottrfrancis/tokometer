@@ -46,6 +46,13 @@ fi
   && echo "[$(date)] monthly ok" \
   || echo "[$(date)] monthly FAILED"
 
+# 1c. API price recheck -- a no-op until 30 days after the last good check
+#     (retried daily while it fails). Compares lib/pricing.py with OpenRouter;
+#     the report shows any drift. Needs the network once a month, nothing else.
+"$PY" "$TOKOMETER_HOME/price_check.py" \
+  && echo "[$(date)] price_check ok" \
+  || echo "[$(date)] price_check FAILED"
+
 # 2. regenerate the self-contained HTML report, then open it in the browser so
 #    it is waiting for you in the morning. (launchd runs in your GUI session, so
 #    `open` works; if the Mac was asleep at 04:00 it opens on next wake.)

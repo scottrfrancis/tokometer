@@ -28,6 +28,8 @@ TOKOMETER_HOME = os.path.expanduser(os.environ.get("TOKOMETER_HOME", "~/.tokomet
 DB_PATH = os.path.join(TOKOMETER_HOME, "ledger.db")
 REPORT_DIR = os.path.join(TOKOMETER_HOME, "reports")
 CURSOR_FETCH_STATE = os.path.join(TOKOMETER_HOME, "state", "cursor_fetch.json")
+PRICE_STATE = os.path.join(TOKOMETER_HOME, "state", "price_check.json")
+PRICE_STALE_DAYS = 35   # price_check.py runs every 30 days; allow a few days' slack
 
 COLORS = {"droid": "#8b7cff", "cursor": "#22b8cf", "copilot": "#ff922b",
           "opencode": "#20c997", "factory": "#8b7cff", "github": "#ff922b",
@@ -222,6 +224,35 @@ def advisory_html(con):
             f'<pre class="cmd">{LOGIN_CMD}</pre></div>')
 
 
+def price_advisory(today=None):
+    """What the monthly price check (price_check.py) found, or "" when all is well."""
+    today = today or dt.date.today()
+    try:
+        with open(PRICE_STATE) as f:
+            st = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return ('<div class="advisory"><strong>List prices have never been checked.</strong> '
+                'daily.sh runs the check; to run it now:'
+                '<pre class="cmd">python3 ~/.tokometer/price_check.py --force</pre></div>')
+    last = st.get("checked_at")
+    age = (today - dt.date.fromisoformat(last)).days if last else None
+    items = [f"<li><code>{d['id']}</code> {d['field']}: ${d['ours']:,.2f} in the table, "
+             f"${d['theirs']:,.2f} on OpenRouter</li>" for d in st.get("drift", [])]
+    items += [f"<li>new: <code>{mid}</code> (priced as its family's current model until added)</li>"
+              for mid in st.get("new_claude", [])]
+    parts = []
+    if items:
+        parts.append(f"<strong>API prices moved since <code>lib/pricing.py</code> was written</strong> "
+                     f"(checked {last}). The value column uses the table, so update it:"
+                     f"<ul>{''.join(items)}</ul>")
+    if age is None or age > PRICE_STALE_DAYS:
+        why = (f"failing: {st.get('error', '?')}" if not st.get("ok")
+               else "not run by daily.sh")
+        parts.append(f"<strong>Price check overdue</strong>, last good check "
+                     f"{last or 'never'} ({why}).")
+    return f'<div class="advisory">{"<br>".join(parts)}</div>' if parts else ""
+
+
 # ------------------------------------------------------------------- headline stats
 def headline(con):
     rows = q(con, f"""
@@ -270,10 +301,11 @@ def headline(con):
     return cards + table
 
 
-VALUE_NOTE = ("<b>value</b> = Claude tokens at Anthropic API list prices: what the same usage "
-              "would cost on the API, to compare against a plan's flat fee. Approximate "
-              "(cache writes at the midpoint of the 5-minute and 1-hour rates); "
-              "self-hosted and other vendors' models show &mdash;.")
+VALUE_NOTE = ("<b>value</b> = what the same tokens would cost on an API, to compare against a "
+              "plan's flat fee or a server's running cost. Claude at Anthropic list prices "
+              "(cache writes at the midpoint of the 5-minute and 1-hour rates); self-hosted "
+              "open-weight models at the median OpenRouter provider for the same weights. "
+              "Approximate. Models with no price show &mdash;.")
 
 
 def accounts(con):
@@ -777,7 +809,7 @@ def build(con):
     else:
         title = "tokometer morning report"
         sub = f"{now:%A, %B %d %Y &middot; %H:%M} &middot; month-to-date"
-        top = advisory_html(con)
+        top = advisory_html(con) + price_advisory()
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <title>{title}</title><style>{CSS}</style></head><body>
 <h1>{title}</h1>

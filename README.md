@@ -33,11 +33,13 @@ weekly-Opus) usage per account so you know where you stand. Exact vs. estimate i
 
 ## See what a flat-fee plan is worth
 
-Subscription use costs nothing per token, so the report also shows a **value** column: the same Claude
-tokens priced at Anthropic's API list prices, per harness, account, plan and model. It is an
-order-of-magnitude figure for judging a plan against its fee, not a bill. Cache writes are priced at the
-midpoint of the 5-minute and 1-hour rates, and self-hosted or other vendors' models are left unpriced.
-The price table is `lib/pricing.py`.
+Subscription use and self-hosted models cost nothing per token, so the report also shows a **value**
+column: what the same tokens would cost on an API, per harness, account, plan and model. Claude is priced
+at Anthropic's list prices, with cache writes at the midpoint of the 5-minute and 1-hour rates.
+Self-hosted open-weight models are priced at the median of OpenRouter's providers for the same weights.
+It is an order-of-magnitude figure for judging a plan or a server, not a bill. The price tables are
+`lib/pricing.py`; `price_check.py` compares them with OpenRouter every 30 days from `daily.sh`, and the
+morning report lists any price that moved more than 20% and any Claude model the table lacks.
 
 ## Check that you're using the right account on the right repo
 

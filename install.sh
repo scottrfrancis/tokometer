@@ -16,6 +16,7 @@ cp "$SRC/daily.sh"                 "$TOKOMETER_HOME/daily.sh"
 cp "$SRC/report_morning.py"        "$TOKOMETER_HOME/report_morning.py"
 cp "$SRC/report_html.py"           "$TOKOMETER_HOME/report_html.py"
 cp "$SRC/monthly.py"               "$TOKOMETER_HOME/monthly.py"
+cp "$SRC/price_check.py"           "$TOKOMETER_HOME/price_check.py"
 chmod +x "$TOKOMETER_HOME/harvest.sh" "$TOKOMETER_HOME/daily.sh"
 
 # Run SQL against the ledger, from stdin or from the first argument. Uses the
