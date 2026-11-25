@@ -172,3 +172,23 @@ def test_installed_report_renders(tmp_path):
         capture_output=True, text=True, timeout=60)
     assert report.returncode == 0, report.stderr
     assert Path(report.stdout.strip()).is_file()
+
+
+def test_installed_price_check_runs(tmp_path):
+    """daily.sh calls price_check.py from TOKOMETER_HOME; it must be there and
+    import lib.pricing from the installed copy. --help-free smoke: a fresh
+    state file with a recent good check makes it a no-op, so no network."""
+    import json
+    import sys
+    result, tokometer_home = _run_install(tmp_path, uname_override="Linux")
+    assert result.returncode == 0, result.stderr
+    import datetime as dt
+    (tokometer_home / "state" / "price_check.json").write_text(json.dumps(
+        {"ok": True, "checked_at": dt.date.today().isoformat(), "drift": [], "new_claude": []}))
+
+    run = subprocess.run(
+        [sys.executable, str(tokometer_home / "price_check.py")],
+        env={"TOKOMETER_HOME": str(tokometer_home), "PATH": "/usr/bin:/bin"},
+        capture_output=True, text=True, timeout=60)
+    assert run.returncode == 0, run.stderr
+    assert "0 drifted" in run.stdout

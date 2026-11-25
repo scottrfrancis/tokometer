@@ -204,8 +204,9 @@ def headline(con):
              f"**{overall_hit}** | **{human(g[4])}** | **{human(g[5])}** | **{usd(g[6])}** | "
              f"**{tot_value}** | **{g[7]}** |")
     L += ["", f"_MTD cache hit rate (cache_read / input+cache_read+cache_write): **{overall_hit}**_",
-          "", "_value = Claude tokens at Anthropic API list prices, to compare against a plan's "
-          "flat fee; approximate. Self-hosted and other vendors' models show —._"]
+          "", "_value = what the same tokens would cost on an API: Claude at Anthropic list "
+          "prices, self-hosted open-weight models at the median OpenRouter provider; "
+          "approximate. Models with no price show —._"]
 
     L += ["", "_by model (subtotal under harness):_", ""]
     mrows = q(con, f"""

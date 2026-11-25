@@ -102,3 +102,15 @@ def test_morning_markdown_carries_value_too(tmp_tokometer):
     assert "| value |" in md
     assert "$20.00" in md and "$10.00" in md
     assert "$30.00" in md   # headline total
+
+
+def test_self_hosted_models_are_valued_at_open_weight_prices(tmp_tokometer):
+    con = sqlite3.connect(str(tmp_tokometer / "ledger.db"))
+    # Qwen3.8 Flash-Next output is $0.47/M at the OpenRouter median
+    _insert(con, "u1", "omp", "omlx", "Qwen3.8-Flash-Next-oQ4e-mtp", M, "Local", "self-hosted")
+    con.commit()
+    rh.set_period(None)
+    html = rh.headline(con)
+    con.close()
+
+    assert "$0.47" in _row(html, "omp · Local")
