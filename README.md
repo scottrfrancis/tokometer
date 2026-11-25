@@ -31,6 +31,14 @@ Claude Code **per account** (`claude-code · Personal`, `· Employer`, `· Clien
 usage is never blended, and a **Claude limits** panel shows your rolling 5-hour / daily / weekly (and
 weekly-Opus) usage per account so you know where you stand. Exact vs. estimate is labeled throughout.
 
+## See what a flat-fee plan is worth
+
+Subscription use costs nothing per token, so the report also shows a **value** column: the same Claude
+tokens priced at Anthropic's API list prices, per harness, account, plan and model. It is an
+order-of-magnitude figure for judging a plan against its fee, not a bill. Cache writes are priced at the
+midpoint of the 5-minute and 1-hour rates, and self-hosted or other vendors' models are left unpriced.
+The price table is `lib/pricing.py`.
+
 ## Check that you're using the right account on the right repo
 
 <img src="docs/screenshots/accounts.png" alt="Per-account flow into repositories" width="820">

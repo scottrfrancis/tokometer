@@ -6,9 +6,10 @@ Sections:
   1. Headline  -- MTD (1st of month -> today, local) totals by harness, ranked by
                   total_tokens, with per-model subtotals. Account-aware harnesses
                   (claude-code) are split per account, e.g. "claude-code · Employer".
+                  "value" prices Claude tokens at API list prices (lib/pricing.py).
   2. Daily     -- per day: harness totals + that harness's top model only.
   3. Hotspots  -- day-of-week AND day-part (night/morning/afternoon/evening).
-  4. Accounts  -- usage by account / subscription (friendly org label).
+  4. Accounts  -- usage and value by account / subscription (friendly org label).
   5. Repos x accounts -- per-repo token split across accounts; flags repos touched
                   by more than one account (IP-isolation eyeball check).
 Account/repo sections sit at the end; the headline already carries the per-account split.
@@ -23,6 +24,8 @@ import sys
 import json
 import sqlite3
 import datetime as dt
+
+from lib import pricing
 
 TOKOMETER_HOME = os.path.expanduser(os.environ.get("TOKOMETER_HOME", "~/.tokometer"))
 DB_PATH = os.path.join(TOKOMETER_HOME, "ledger.db")
@@ -72,7 +75,13 @@ def usd(x):
     return "$" + format(x or 0, ".2f")
 
 
+def value(x):
+    """List-price value, or a dash when nothing in the group has a list price."""
+    return "—" if x is None else "$" + format(x, ",.2f")
+
+
 def q(con, sql, params=()):
+    pricing.register(con)   # cheap, and keeps every query able to use SUM_VALUE
     return con.execute(sql, params).fetchall()
 
 
@@ -169,7 +178,7 @@ def headline(con):
         SELECT {HKEY} hk, MAX(confidence) conf,
                SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens),
                SUM(cache_write_tokens), SUM(reasoning_tokens), SUM(total_tokens),
-               SUM(cost_usd), COUNT(*)
+               SUM(cost_usd), COUNT(*), {pricing.SUM_VALUE}
         FROM usage {WHERE_MTD}
         GROUP BY hk
         ORDER BY SUM(total_tokens) DESC
@@ -177,19 +186,26 @@ def headline(con):
     if not rows:
         return "\n".join(L + ["_no usage recorded this month_", ""])
 
-    L += ["| harness | conf | in | out | cache | hit% | reason | total | cost | records |",
-          "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|"]
+    L += ["| harness | conf | in | out | cache | hit% | reason | total | cost | value | records |",
+          "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|"]
     g = [0, 0, 0, 0, 0, 0, 0.0, 0]
-    for h, conf, i, o, c, cw, r, t, cost, n in rows:
+    values = []
+    for h, conf, i, o, c, cw, r, t, cost, n, val in rows:
         hit = cache_hit_pct(c, i, cw)
         L.append(f"| {h} | {conf} | {human(i)} | {human(o)} | {human(c)} | {hit} | "
-                 f"{human(r)} | {human(t)} | {usd(cost)} | {n} |")
+                 f"{human(r)} | {human(t)} | {usd(cost)} | {value(val)} | {n} |")
         for idx, v in enumerate((i, o, c, cw, r, t, cost or 0, n)):
             g[idx] += v
+        if val is not None:
+            values.append(val)
     overall_hit = cache_hit_pct(g[2], g[0], g[3])
+    tot_value = value(sum(values) if values else None)
     L.append(f"| **TOTAL** |  | **{human(g[0])}** | **{human(g[1])}** | **{human(g[2])}** | "
-             f"**{overall_hit}** | **{human(g[4])}** | **{human(g[5])}** | **{usd(g[6])}** | **{g[7]}** |")
-    L += ["", f"_MTD cache hit rate (cache_read / input+cache_read+cache_write): **{overall_hit}**_"]
+             f"**{overall_hit}** | **{human(g[4])}** | **{human(g[5])}** | **{usd(g[6])}** | "
+             f"**{tot_value}** | **{g[7]}** |")
+    L += ["", f"_MTD cache hit rate (cache_read / input+cache_read+cache_write): **{overall_hit}**_",
+          "", "_value = Claude tokens at Anthropic API list prices, to compare against a plan's "
+          "flat fee; approximate. Self-hosted and other vendors' models show —._"]
 
     L += ["", "_by model (subtotal under harness):_", ""]
     mrows = q(con, f"""
@@ -237,7 +253,8 @@ def accounts(con):
         SELECT COALESCE(NULLIF(org,''),'(unattributed)') org,
                COALESCE(NULLIF(account,''),'-') account,
                COALESCE(NULLIF(subscription,''),'-') sub,
-               SUM(total_tokens) tot, SUM(cost_usd) cost, COUNT(*) n
+               SUM(total_tokens) tot, SUM(cost_usd) cost, COUNT(*) n,
+               {pricing.SUM_VALUE} val
         FROM usage {WHERE_MTD}
           AND (org IS NOT NULL OR account IS NOT NULL
                OR subscription IS NOT NULL OR harness='claude-code')
@@ -247,10 +264,10 @@ def accounts(con):
     if not rows:
         return ""  # no account-aware harness recorded usage this month
     L = ["## Accounts -- usage by account / subscription (month-to-date)", "",
-         "| account (org) | login | plan | total | cost | records |",
-         "|---|---|---|--:|--:|--:|"]
-    for org, acct, sub, tot, cost, n in rows:
-        L.append(f"| {org} | {acct} | {sub} | {human(tot)} | {usd(cost)} | {n} |")
+         "| account (org) | login | plan | total | cost | value | records |",
+         "|---|---|---|--:|--:|--:|--:|"]
+    for org, acct, sub, tot, cost, n, val in rows:
+        L.append(f"| {org} | {acct} | {sub} | {human(tot)} | {usd(cost)} | {value(val)} | {n} |")
     L.append("")
     return "\n".join(L)
 

@@ -408,7 +408,8 @@ ORDER BY day, harness;
 
 Report sections to render:
 1. **Headline:** total tokens + cost for the month, and **% of each cap consumed** (did the
-   routing actually spread the load, or did one cap dominate?).
+   routing actually spread the load, or did one cap dominate?). A **value** column prices Claude
+   tokens at API list prices (`lib/pricing.py`), so flat-fee usage can be compared with the fee.
 2. **By harness × model** — where the work actually went.
 3. **By day** (a sparkline/bar of total tokens) and **by day-part** (when you work) and
    **week-part** (weekday vs weekend).
