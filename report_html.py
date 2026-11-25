@@ -5,10 +5,12 @@ Sections, top to bottom:
   1. Claude limits         -- rolling 5h/daily/weekly (+Opus weekly) usage per account.
   2. Headline stats        -- totals + per-harness table. Account-aware harnesses
                               (claude-code) split per account ("· Employer" etc).
+                              "value" prices Claude tokens at API list prices
+                              (lib/pricing.py), with a per-model table under it.
   3. Graphs (inline SVG)   -- tokens by harness, daily totals, hour-of-day
                               (day-part), and top models.
   4. Productivity (Sankey) -- output tokens harness -> model -> repo -> code/docs/tests.
-  5. Accounts              -- usage by account / subscription (friendly org label),
+  5. Accounts              -- usage and value by account / subscription (friendly org label),
                               plus a repo x account matrix flagging multi-account repos.
 
 Self-contained: inline CSS + inline SVG, no CDN/JS, works offline. Writes
@@ -19,6 +21,8 @@ import sys
 import json
 import sqlite3
 import datetime as dt
+
+from lib import pricing
 
 TOKOMETER_HOME = os.path.expanduser(os.environ.get("TOKOMETER_HOME", "~/.tokometer"))
 DB_PATH = os.path.join(TOKOMETER_HOME, "ledger.db")
@@ -112,7 +116,13 @@ def cache_hit_pct(cache_read, input_tok, cache_write):
 
 
 def q(con, sql, p=()):
+    pricing.register(con)   # cheap, and keeps every query able to use SUM_VALUE
     return con.execute(sql, p).fetchall()
+
+
+def money(v):
+    """Dollars, or a dash when nothing in the group has a list price."""
+    return "—" if v is None else f"${v:,.2f}"
 
 
 # ------------------------------------------------------------------------ advisory
@@ -218,7 +228,7 @@ def headline(con):
         SELECT {HKEY} hk, MAX(confidence) conf,
                SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens),
                SUM(cache_write_tokens), SUM(total_tokens), SUM(cost_usd),
-               SUM(credits), COUNT(*)
+               SUM(credits), COUNT(*), {pricing.SUM_VALUE}
         FROM usage {where()} GROUP BY hk ORDER BY SUM(total_tokens) DESC""")
     tot_tok = sum(r[6] for r in rows)
     tot_cost = sum(r[7] or 0 for r in rows)
@@ -226,18 +236,21 @@ def headline(con):
     tot_input = sum(r[2] or 0 for r in rows)
     tot_cache_read = sum(r[4] or 0 for r in rows)
     tot_cache_write = sum(r[5] or 0 for r in rows)
+    values = [r[10] for r in rows if r[10] is not None]
+    tot_value = sum(values) if values else None
     overall_hit = cache_hit_pct(tot_cache_read, tot_input, tot_cache_write)
 
     cards = f"""
       <div class="cards">
         <div class="card"><div class="num">{human(tot_tok)}</div><div class="lbl">total tokens (MTD)</div></div>
         <div class="card"><div class="num">${tot_cost:,.2f}</div><div class="lbl">spend (MTD)</div></div>
+        <div class="card"><div class="num">{money(tot_value)}</div><div class="lbl">list value (MTD)</div></div>
         <div class="card"><div class="num">{tot_rec}</div><div class="lbl">records</div></div>
         <div class="card"><div class="num">{overall_hit}</div><div class="lbl">cache hit % (MTD)</div></div>
       </div>"""
 
     trs = []
-    for h, conf, i, o, c, cw, t, cost, cr, n in rows:
+    for h, conf, i, o, c, cw, t, cost, cr, n, val in rows:
         dot = f'<span class="dot" style="background:{color(h)}"></span>'
         badge = "ok" if conf == "exact" else "est"
         hit = cache_hit_pct(c, i, cw)
@@ -245,14 +258,22 @@ def headline(con):
           <td>{dot}{h}</td><td class="b-{badge}">{conf}</td>
           <td class="r">{human(i)}</td><td class="r">{human(o)}</td>
           <td class="r">{human(c)}</td><td class="r">{hit}</td><td class="r">{human(t)}</td>
-          <td class="r">${(cost or 0):,.2f}</td><td class="r">{human(cr)}</td><td class="r">{n}</td></tr>""")
+          <td class="r">${(cost or 0):,.2f}</td><td class="r">{money(val)}</td>
+          <td class="r">{human(cr)}</td><td class="r">{n}</td></tr>""")
     table = f"""
       <table class="stats">
         <thead><tr><th>harness</th><th>conf</th><th>in</th><th>out</th><th>cache</th>
-          <th>hit%</th><th>total</th><th>cost</th><th>credits</th><th>recs</th></tr></thead>
+          <th>hit%</th><th>total</th><th>cost</th><th>value</th><th>credits</th><th>recs</th></tr></thead>
         <tbody>{''.join(trs)}</tbody>
-      </table>"""
+      </table>
+      <p class="note" style="margin:-14px 2px 18px">{VALUE_NOTE}</p>"""
     return cards + table
+
+
+VALUE_NOTE = ("<b>value</b> = Claude tokens at Anthropic API list prices: what the same usage "
+              "would cost on the API, to compare against a plan's flat fee. Approximate "
+              "(cache writes at the midpoint of the 5-minute and 1-hour rates); "
+              "self-hosted and other vendors' models show &mdash;.")
 
 
 def accounts(con):
@@ -261,7 +282,7 @@ def accounts(con):
         SELECT COALESCE(NULLIF(org,''),'(unattributed)') org,
                COALESCE(NULLIF(account,''),'-') account,
                COALESCE(NULLIF(subscription,''),'-') sub,
-               SUM(total_tokens), SUM(cost_usd), COUNT(*)
+               SUM(total_tokens), SUM(cost_usd), COUNT(*), {pricing.SUM_VALUE}
         FROM usage {where()}
           AND (org IS NOT NULL OR account IS NOT NULL
                OR subscription IS NOT NULL OR harness='claude-code')
@@ -269,16 +290,16 @@ def accounts(con):
     if not rows:
         return ""
     trs = []
-    for org, acct, sub, t, cost, n in rows:
+    for org, acct, sub, t, cost, n, val in rows:
         trs.append(f"""<tr>
           <td>{org}</td><td>{acct}</td><td>{sub}</td>
           <td class="r">{human(t)}</td><td class="r">${(cost or 0):,.2f}</td>
-          <td class="r">{n}</td></tr>""")
+          <td class="r">{money(val)}</td><td class="r">{n}</td></tr>""")
     return f"""
       <h2 style="font-size:15px;margin:18px 0 8px">Accounts</h2>
       <table class="stats">
         <thead><tr><th>account (org)</th><th>login</th><th>plan</th>
-          <th>total</th><th>cost</th><th>recs</th></tr></thead>
+          <th>total</th><th>cost</th><th>value</th><th>recs</th></tr></thead>
         <tbody>{''.join(trs)}</tbody>
       </table>{repo_accounts(con)}"""
 
@@ -414,6 +435,36 @@ def chart_models(con):
                       GROUP BY hk, p, m ORDER BY t DESC LIMIT 8""")
     data = [(_model_label(m, p), t, color(h)) for h, p, m, t in rows]
     return svg_hbar("Top models by tokens (MTD)", data)
+
+
+def models_table(con, limit=12):
+    """List-price value per model and display harness, largest value first."""
+    rows = q(con, f"""SELECT {HKEY} hk, COALESCE(NULLIF(provider,''),'') p,
+                      COALESCE(NULLIF(model,''),'(unspecified)') m,
+                      SUM(output_tokens) + SUM(reasoning_tokens), SUM(total_tokens),
+                      {pricing.SUM_VALUE} v
+                      FROM usage {where()}
+                      GROUP BY hk, p, m ORDER BY v IS NULL, v DESC, 5 DESC LIMIT ?""",
+             (limit,))
+    if not rows:
+        return ""
+    tot_value = sum(r[5] for r in rows if r[5] is not None) or None
+    trs = []
+    for h, p, m, out, t, val in rows:
+        dot = f'<span class="dot" style="background:{color(h)}"></span>'
+        share = f"{val / tot_value:.0%}" if val is not None and tot_value else "—"
+        trs.append(f"""<tr>
+          <td>{_model_label(m, p, width=40)}</td><td>{dot}{h}</td>
+          <td class="r">{human(out)}</td><td class="r">{human(t)}</td>
+          <td class="r">{money(val)}</td><td class="r">{share}</td></tr>""")
+    return f"""
+      <h2 style="font-size:15px;margin:4px 0 8px">Value by model
+        <span class="sub" style="font-weight:400">(API list price, MTD)</span></h2>
+      <table class="stats">
+        <thead><tr><th>model</th><th>harness</th><th>out</th><th>total</th>
+          <th>value</th><th>share</th></tr></thead>
+        <tbody>{''.join(trs)}</tbody>
+      </table>"""
 
 
 # ----------------------------------------------------- productivity Sankey
@@ -735,6 +786,7 @@ def build(con):
 {claude_limits(con)}
 <h2 style="font-size:15px;margin:18px 0 8px">Headline</h2>
 {headline(con)}
+{models_table(con)}
 <h2 style="font-size:15px;margin:4px 0 10px">Graphs</h2>
 <div class="grid">
   <div class="chart">{chart_by_harness(con)}</div>

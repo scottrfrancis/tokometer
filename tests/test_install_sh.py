@@ -156,3 +156,19 @@ def test_installs_without_the_sqlite3_cli(tmp_path):
     con.close()
     assert {"account", "subscription", "org", "cwd", "credits"} <= cols
     assert "session_log_raw" in tables
+
+
+def test_installed_report_renders(tmp_path):
+    """daily.sh runs report_html.py from TOKOMETER_HOME, so every module it
+    imports has to be copied there. A missing lib module fails the report at
+    04:00 with nothing but "report FAILED" in daily.log."""
+    import sys
+    result, tokometer_home = _run_install(tmp_path, uname_override="Linux")
+    assert result.returncode == 0, result.stderr
+
+    report = subprocess.run(
+        [sys.executable, str(tokometer_home / "report_html.py")],
+        env={"TOKOMETER_HOME": str(tokometer_home), "PATH": "/usr/bin:/bin"},
+        capture_output=True, text=True, timeout=60)
+    assert report.returncode == 0, report.stderr
+    assert Path(report.stdout.strip()).is_file()

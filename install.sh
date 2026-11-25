@@ -9,6 +9,7 @@ mkdir -p "$TOKOMETER_HOME/collectors" "$TOKOMETER_HOME/lib" "$TOKOMETER_HOME/sta
 
 # code
 cp "$SRC/lib/ledger.py"            "$TOKOMETER_HOME/lib/"
+cp "$SRC/lib/pricing.py"           "$TOKOMETER_HOME/lib/"
 cp "$SRC/collectors/"*.py          "$TOKOMETER_HOME/collectors/"
 cp "$SRC/harvest.sh"               "$TOKOMETER_HOME/harvest.sh"
 cp "$SRC/daily.sh"                 "$TOKOMETER_HOME/daily.sh"
