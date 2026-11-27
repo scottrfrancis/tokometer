@@ -40,13 +40,24 @@ if [ -f "$TOKOMETER_HOME/collectors/session_logs.py" ]; then
     || echo "[$(date)] session_logs FAILED"
 fi
 
-# 1b. monthly rollover -- catch-up safe; a no-op except at the first run after a
+# 1b. push to Beaufort now, so the fleet report built on the hub at 04:40 has
+#     this morning's harvest. The 2-hourly push timer keeps running as well; a
+#     row sent twice is ignored there (bronze dedups on uid). Skipped on a
+#     machine with no flightplan.env.
+if [ -f "$TOKOMETER_HOME/flightplan.env" ] && [ -f "$TOKOMETER_HOME/push/client.py" ]; then
+  ( set -a; . "$TOKOMETER_HOME/flightplan.env"; set +a
+    cd "$TOKOMETER_HOME" && "$PY" -m push.client ) >> "$TOKOMETER_HOME/push-daily.log" 2>&1 \
+    && echo "[$(date)] push ok" \
+    || echo "[$(date)] push FAILED (see push-daily.log)"
+fi
+
+# 1c. monthly rollover -- catch-up safe; a no-op except at the first run after a
 #     month turns over (so it survives the Mac being off at midnight on the 1st).
 "$PY" "$TOKOMETER_HOME/monthly.py" \
   && echo "[$(date)] monthly ok" \
   || echo "[$(date)] monthly FAILED"
 
-# 1c. API price recheck -- a no-op until 30 days after the last good check
+# 1d. API price recheck -- a no-op until 30 days after the last good check
 #     (retried daily while it fails). Compares lib/pricing.py with OpenRouter;
 #     the report shows any drift. Needs the network once a month, nothing else.
 "$PY" "$TOKOMETER_HOME/price_check.py" \

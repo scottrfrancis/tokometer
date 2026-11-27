@@ -192,3 +192,15 @@ def test_installed_price_check_runs(tmp_path):
         capture_output=True, text=True, timeout=60)
     assert run.returncode == 0, run.stderr
     assert "0 drifted" in run.stdout
+
+
+def test_install_records_the_build_it_installed(tmp_path):
+    """The push stamps this on every row, so the fleet report can flag a
+    machine still running an old build."""
+    result, tokometer_home = _run_install(tmp_path, uname_override="Linux")
+    assert result.returncode == 0, result.stderr
+
+    expected = subprocess.run(["git", "-C", str(REPO_ROOT), "describe", "--always", "--dirty"],
+                              capture_output=True, text=True).stdout.strip()
+    assert expected, "the repo should describe itself"
+    assert (tokometer_home / "VERSION").read_text().strip() == expected

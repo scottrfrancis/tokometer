@@ -398,6 +398,22 @@ def test_usage_row_meta_omits_unknown_values(mock_ingest, tmp_tokometer):
     assert "subscription" not in pushed["meta"] and "org" not in pushed["meta"]
 
 
+def test_usage_row_meta_names_the_installed_build(mock_ingest, tmp_tokometer):
+    """The fleet report flags machines still on an old build; it can only see
+    a build that every row names."""
+    (tmp_tokometer / "VERSION").write_text("4e1e4f2-dirty\n")
+
+    pushed = _push_one_usage_row(mock_ingest, tmp_tokometer)
+
+    assert pushed["meta"]["tokometer_version"] == "4e1e4f2-dirty"
+
+
+def test_usage_row_meta_has_no_build_when_none_is_installed(mock_ingest, tmp_tokometer):
+    pushed = _push_one_usage_row(mock_ingest, tmp_tokometer)
+
+    assert "tokometer_version" not in pushed["meta"]
+
+
 # ─── push_all drains the backlog ───────────────────────────────────────────
 #
 # The push runs every 2h. Sending one batch per kind per run caps throughput

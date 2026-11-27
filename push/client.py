@@ -137,6 +137,18 @@ META_COLUMNS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _installed_build() -> str | None:
+    """The build install.sh recorded in TOKOMETER_HOME/VERSION, if any.
+
+    Stamped into each usage row's meta so the fleet report can flag a machine
+    still running an old build."""
+    home = Path(os.path.expanduser(os.environ.get("TOKOMETER_HOME", "~/.tokometer")))
+    try:
+        return (home / "VERSION").read_text().strip() or None
+    except OSError:
+        return None
+
+
 def _host() -> str:
     """Canonical host identity stamped onto every pushed row.
 
@@ -249,6 +261,7 @@ def _fetch_rows(con: sqlite3.Connection, kind: str, since_rowid: int | None,
     sqlite_table, _, cols = KIND_TABLES[kind]
     remap = COLUMN_REMAPS.get(kind, {})
     meta_cols = META_COLUMNS.get(kind, ())
+    build = _installed_build() if kind == "tokometer_usage" else None
     col_list = ", ".join(cols)
     if since_rowid is not None:
         sql = (
@@ -277,6 +290,8 @@ def _fetch_rows(con: sqlite3.Connection, kind: str, since_rowid: int | None,
                     meta[c] = value
             else:
                 rec[remap.get(c, c)] = value
+        if build:
+            meta["tokometer_version"] = build
         if meta_cols:
             rec["meta"] = meta
         # Some bronze.* tables require `host`; for usage rows we set it from

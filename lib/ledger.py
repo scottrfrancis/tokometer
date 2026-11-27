@@ -3,6 +3,7 @@
 Local-only. stdlib only. Imported by every collector.
 """
 import os
+import sys
 import json
 import sqlite3
 import datetime as dt
@@ -26,14 +27,47 @@ def connect():
     return con
 
 
+def collect_since():
+    """The local date this machine starts counting from, or None.
+
+    TOKOMETER_COLLECT_SINCE (YYYY-MM-DD) is set when a machine moves to a new
+    build or a collector is first switched on, so re-reading old files cannot
+    add rows for days that have already been reported.
+    """
+    raw = os.environ.get("TOKOMETER_COLLECT_SINCE", "").strip()
+    if not raw:
+        return None
+    try:
+        return dt.date.fromisoformat(raw)
+    except ValueError:
+        raise ValueError(f"TOKOMETER_COLLECT_SINCE={raw!r} is not a YYYY-MM-DD date") from None
+
+
+def _local_date(iso_ts):
+    try:
+        return dt.datetime.fromisoformat(iso_ts.replace("Z", "+00:00")).astimezone().date()
+    except (AttributeError, ValueError):
+        return None
+
+
 def insert_usage(con, rows, on_conflict="ignore"):
     """Insert usage rows keyed by USAGE_COLS.
 
     on_conflict='ignore'  -> append-only, dedupe by uid (immutable records).
     on_conflict='replace' -> upsert by uid, refreshing mutable totals (e.g. a
                              Droid session whose token counts grow during use).
+    Rows dated before TOKOMETER_COLLECT_SINCE are dropped (see collect_since).
     Returns the net change in row/field count.
     """
+    since = collect_since()
+    if since is not None:
+        rows = list(rows)
+        kept = [r for r in rows if (_local_date(r.get("ts")) or since) >= since]
+        dropped = len(rows) - len(kept)
+        if dropped:
+            print(f"[ledger] skipped {dropped} row{'s' if dropped != 1 else ''} before "
+                  f"TOKOMETER_COLLECT_SINCE={since.isoformat()}", file=sys.stderr)
+        rows = kept
     cols = ",".join(USAGE_COLS)
     placeholders = ",".join("?" for _ in USAGE_COLS)
     if on_conflict == "replace":
