@@ -105,7 +105,7 @@ if [ ! -f "$TOKOMETER_HOME/tokometer.env" ]; then
   cat > "$TOKOMETER_HOME/tokometer.env" <<ENVEOF
 # tokometer per-machine config -- sourced by daily.sh and harvest.sh. Local only; not committed.
 # Harnesses to harvest + surface (space-separated). Drop ones you don't use to avoid
-# irrelevant errors/advisories. Available: opencode omp droid copilot claude_code git_metrics gh_metrics cursor
+# irrelevant errors/advisories. Available: opencode omp openclaw openwebui droid copilot claude_code git_metrics gh_metrics cursor
 export TOKOMETER_HARNESSES="opencode omp claude_code git_metrics gh_metrics"
 # Repos under TOKOMETER_GIT_ROOT are scanned recursively (TOKOMETER_GIT_DEPTH levels).
 export TOKOMETER_GIT_ROOT="$GITROOT"

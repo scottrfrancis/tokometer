@@ -43,6 +43,28 @@ def collect_since():
         raise ValueError(f"TOKOMETER_COLLECT_SINCE={raw!r} is not a YYYY-MM-DD date") from None
 
 
+def provider_aliases():
+    """{name a client uses: name the ledger uses} from TOKOMETER_PROVIDER_ALIASES.
+
+    A client that calls a model server by a generic name ("vllm") is recorded
+    under the server's own provider name ("dev-ai"), so its rows group and price
+    with OMP's rows for the same server. Format: "vllm=dev-ai other=studio".
+    """
+    pairs = os.environ.get("TOKOMETER_PROVIDER_ALIASES", "").replace(",", " ").split()
+    out = {}
+    for pair in pairs:
+        name, sep, target = pair.partition("=")
+        if not sep or not name or not target:
+            raise ValueError(f"TOKOMETER_PROVIDER_ALIASES entry {pair!r} is not name=provider")
+        out[name] = target
+    return out
+
+
+def local_midnight_epoch_ms(day):
+    """Epoch ms of local midnight at the start of a date."""
+    return int(dt.datetime.combine(day, dt.time()).astimezone().timestamp() * 1000)
+
+
 def _local_date(iso_ts):
     try:
         return dt.datetime.fromisoformat(iso_ts.replace("Z", "+00:00")).astimezone().date()
