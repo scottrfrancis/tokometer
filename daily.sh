@@ -66,11 +66,21 @@ fi
 
 # 2. regenerate the self-contained HTML report, then open it in the browser so
 #    it is waiting for you in the morning. (launchd runs in your GUI session, so
-#    `open` works; if the Mac was asleep at 04:00 it opens on next wake.)
+#    `open` works; if the Mac was asleep at 04:00 it opens on next wake.) With a
+#    fleet hub set in fleet.env, fleet_open.sh opens the all-machines report at
+#    05:05 instead. TOKOMETER_OPEN / TOKOMETER_UNAME exist for the tests.
 REPORT_PATH="$("$PY" "$TOKOMETER_HOME/report_html.py")"
 if [ -n "$REPORT_PATH" ] && [ -f "$REPORT_PATH" ]; then
   echo "[$(date)] report ok -> $REPORT_PATH"
-  [ "$(uname)" = "Darwin" ] && open "$REPORT_PATH" 2>/dev/null || true
+  if [ "$("${TOKOMETER_UNAME:-uname}")" = "Darwin" ]; then
+    if grep -qE '^FLEET_HUB=.+' "$TOKOMETER_HOME/fleet.env" 2>/dev/null; then
+      echo "[$(date)] local report not opened: fleet-open opens the fleet report"
+    elif "${TOKOMETER_OPEN:-open}" "$REPORT_PATH"; then
+      echo "[$(date)] opened $REPORT_PATH"
+    else
+      echo "[$(date)] open FAILED for $REPORT_PATH"
+    fi
+  fi
 else
   echo "[$(date)] report FAILED"
 fi

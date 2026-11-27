@@ -73,10 +73,21 @@ def set_period(month=None):
     PERIOD_LABEL = dt.date(y, m, 1).strftime("%B %Y")
 
 
+def set_window(start, label):
+    """Open-ended period from `start` (a date) on, e.g. the fleet report's month
+    to date, or 'since <start date>' in the month the fleet count began."""
+    global PERIOD_START, PERIOD_END, IS_MONTH, PERIOD_LABEL
+    PERIOD_START, PERIOD_END = start.isoformat(), None
+    IS_MONTH = False
+    PERIOD_LABEL = label
+
+
 def pred(col="ts"):
     """SQL predicate (no WHERE) restricting `col` to the active period."""
     if PERIOD_START is None:
         return f"date({col},'localtime') >= date('now','localtime','start of month')"
+    if PERIOD_END is None:
+        return f"date({col},'localtime') >= '{PERIOD_START}'"
     return (f"date({col},'localtime') >= '{PERIOD_START}' "
             f"AND date({col},'localtime') < '{PERIOD_END}'")
 
@@ -827,6 +838,35 @@ def build(con):
   <div class="chart full">{chart_hourly(con)}</div>
 </div>
 {build_productivity(con)}
+{accounts(con)}
+</body></html>"""
+
+
+def build_fleet(con, machines_html, flags_html=""):
+    """The report over every machine (see fleet.py). Leaves out the sections
+    that need tables only a machine's own ledger has (commits, PRs, Cursor)."""
+    now = dt.datetime.now()
+    title = "tokometer fleet report"
+    sub = f"{now:%A, %B %d %Y &middot; %H:%M} &middot; every machine &middot; {PERIOD_LABEL}"
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<title>{title}</title><style>{CSS}</style></head><body>
+<h1>{title}</h1>
+<p class="sub">{sub}</p>
+{flags_html}
+{price_advisory()}
+{claude_limits(con)}
+<h2 style="font-size:15px;margin:18px 0 8px">Headline</h2>
+{headline(con)}
+<h2 style="font-size:15px;margin:4px 0 10px">Machines</h2>
+{machines_html}
+{models_table(con)}
+<h2 style="font-size:15px;margin:4px 0 10px">Graphs</h2>
+<div class="grid">
+  <div class="chart">{chart_by_harness(con)}</div>
+  <div class="chart">{chart_models(con)}</div>
+  <div class="chart full">{chart_daily(con)}</div>
+  <div class="chart full">{chart_hourly(con)}</div>
+</div>
 {accounts(con)}
 </body></html>"""
 

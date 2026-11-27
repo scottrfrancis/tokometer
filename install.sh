@@ -17,7 +17,13 @@ cp "$SRC/report_morning.py"        "$TOKOMETER_HOME/report_morning.py"
 cp "$SRC/report_html.py"           "$TOKOMETER_HOME/report_html.py"
 cp "$SRC/monthly.py"               "$TOKOMETER_HOME/monthly.py"
 cp "$SRC/price_check.py"           "$TOKOMETER_HOME/price_check.py"
-chmod +x "$TOKOMETER_HOME/harvest.sh" "$TOKOMETER_HOME/daily.sh"
+# the all-machines report (built on the hub) and its Kata and Mac openers
+cp "$SRC/fleet.py"                 "$TOKOMETER_HOME/fleet.py"
+cp "$SRC/fleet.sh"                 "$TOKOMETER_HOME/fleet.sh"
+cp "$SRC/fleet_open.sh"            "$TOKOMETER_HOME/fleet_open.sh"
+cp "$SRC/kata_tokens.py"           "$TOKOMETER_HOME/kata_tokens.py"
+chmod +x "$TOKOMETER_HOME/harvest.sh" "$TOKOMETER_HOME/daily.sh" "$TOKOMETER_HOME/fleet.sh" \
+  "$TOKOMETER_HOME/fleet_open.sh" "$TOKOMETER_HOME/kata_tokens.py"
 # the build being installed: push.client stamps it on every usage row, so the
 # fleet report can flag a machine left on an old build
 git -C "$SRC" describe --always --dirty > "$TOKOMETER_HOME/VERSION" 2>/dev/null \
@@ -157,6 +163,25 @@ if [ "$(uname)" = "Darwin" ]; then
 PLISTEOF
   launchctl unload "$PLIST" 2>/dev/null || true
   launchctl load -w "$PLIST" && echo "scheduled daily.sh at 04:00 (launchd: ai.tokometer.daily)"
+  # 05:05: copy the hub's fleet report and open it (a no-op until fleet.env sets
+  # FLEET_HUB; daily.sh then stops opening this machine's own report).
+  FLEET_PLIST="$AGENT_DIR/ai.tokometer.fleet-open.plist"
+  cat > "$FLEET_PLIST" <<PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>ai.tokometer.fleet-open</string>
+    <key>ProgramArguments</key><array><string>/bin/bash</string><string>$TOKOMETER_HOME/fleet_open.sh</string></array>
+    <key>StartCalendarInterval</key><dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>5</integer></dict>
+    <key>StandardOutPath</key><string>$TOKOMETER_HOME/fleet-open.log</string>
+    <key>StandardErrorPath</key><string>$TOKOMETER_HOME/fleet-open.log</string>
+    <key>RunAtLoad</key><false/>
+</dict>
+</plist>
+PLISTEOF
+  launchctl unload "$FLEET_PLIST" 2>/dev/null || true
+  launchctl load -w "$FLEET_PLIST" && echo "scheduled fleet_open.sh at 05:05 (launchd: ai.tokometer.fleet-open)"
 elif [ -n "${WINDIR:-}" ] || uname -s | grep -qiE 'mingw|msys|cygwin'; then
   # Windows (Git Bash): no launchd/cron. Print the one-time Task Scheduler command;
   # full walkthrough in docs/WINDOWS.md. (We don't auto-register: it needs the user's
@@ -177,6 +202,15 @@ else
   # auto-edit the operator's crontab -- print the line for `crontab -e`.
   echo "Linux detected -- add this line to your crontab (crontab -e) to schedule daily.sh at 04:00:"
   echo "  0 4 * * * $TOKOMETER_HOME/daily.sh >> $TOKOMETER_HOME/daily.log 2>&1"
+fi
+
+# the fleet hub (fleet.env names its database): link kata-tokens for Morning Kata
+# and print the cron line that builds the fleet report after every 04:00 push.
+if grep -qE '^FLEET_PG_HOST=.+' "$TOKOMETER_HOME/fleet.env" 2>/dev/null; then
+  mkdir -p "$HOME/.local/bin"
+  ln -sfn "$TOKOMETER_HOME/kata_tokens.py" "$HOME/.local/bin/kata-tokens"
+  echo "fleet hub: linked $HOME/.local/bin/kata-tokens; schedule the fleet report with:"
+  echo "  40 4 * * * $TOKOMETER_HOME/fleet.sh >> $TOKOMETER_HOME/fleet.log 2>&1"
 fi
 
 echo "done. run: $TOKOMETER_HOME/harvest.sh"
