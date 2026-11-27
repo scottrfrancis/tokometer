@@ -204,3 +204,34 @@ def test_install_records_the_build_it_installed(tmp_path):
                               capture_output=True, text=True).stdout.strip()
     assert expected, "the repo should describe itself"
     assert (tokometer_home / "VERSION").read_text().strip() == expected
+
+
+def test_install_copies_the_fleet_files(tmp_path):
+    result, tokometer_home = _run_install(tmp_path, uname_override="Linux")
+    assert result.returncode == 0, result.stderr
+
+    for f in ("fleet.py", "fleet.sh", "fleet_open.sh", "kata_tokens.py"):
+        assert (tokometer_home / f).is_file(), f
+
+
+def test_on_a_mac_install_schedules_fleet_open_at_0505(tmp_path):
+    result, tokometer_home = _run_install(tmp_path, uname_override="Darwin")
+    assert result.returncode == 0, result.stderr
+
+    plist = (tmp_path / "home" / "Library" / "LaunchAgents" / "ai.tokometer.fleet-open.plist")
+    text = plist.read_text()
+    assert f"<string>{tokometer_home}/fleet_open.sh</string>" in text
+    assert "<key>Hour</key><integer>5</integer><key>Minute</key><integer>5</integer>" in text
+
+
+def test_on_the_hub_install_links_kata_tokens(tmp_path):
+    tokometer_home = tmp_path / "tokometer_home"
+    tokometer_home.mkdir()
+    (tokometer_home / "fleet.env").write_text("FLEET_PG_HOST=db.example\n")
+
+    result, _ = _run_install(tmp_path, uname_override="Linux")
+    assert result.returncode == 0, result.stderr
+
+    link = tmp_path / "home" / ".local" / "bin" / "kata-tokens"
+    assert link.is_symlink() and Path(os.readlink(link)) == tokometer_home / "kata_tokens.py"
+    assert "40 4 * * *" in result.stdout, "prints the fleet.sh cron line"

@@ -20,6 +20,7 @@ Env:
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import re
@@ -443,6 +444,46 @@ def push_all(*, kinds: Iterable[str] | None = None,
     return {"ok": not real_failure, "results": results}
 
 
+# ─── heartbeat ──────────────────────────────────────────────────────────
+
+def heartbeat_row(now: dt.datetime | None = None) -> dict:
+    """One zero-token usage row per machine per local day.
+
+    The fleet report flags a machine Beaufort has not heard from, and an idle
+    machine sends no usage rows, so every push run also sends this one. Its
+    uid repeats all day, so only the first run of the day stores it. The
+    fleet report keeps rows with source "heartbeat" out of every total."""
+    now = now or dt.datetime.now(dt.timezone.utc)
+    host = _host()
+    meta: dict[str, Any] = {"source": "heartbeat", "confidence": "exact"}
+    build = _installed_build()
+    if build:
+        meta["tokometer_version"] = build
+    return {
+        "uid": f"heartbeat:{host}:{now.astimezone().date().isoformat()}",
+        "host": host,
+        "ts": now.astimezone(dt.timezone.utc).replace(microsecond=0)
+                 .isoformat().replace("+00:00", "Z"),
+        "harness": "tokometer",
+        "provider": None, "model": None, "account": None, "session_id": None, "cwd": None,
+        "input_tokens": 0, "output_tokens": 0, "cache_read": 0, "cache_write": 0,
+        "cost_usd": 0,
+        "meta": meta,
+    }
+
+
+def send_heartbeat(*, ingest_url: str | None = None, token: str | None = None,
+                   now: dt.datetime | None = None) -> dict:
+    ingest_url = ingest_url or os.environ.get("FLIGHTPLAN_INGEST_URL")
+    token = token or os.environ.get("FLIGHTPLAN_INGEST_TOKEN")
+    if not ingest_url or not token:
+        return {"ok": False, "error": "FLIGHTPLAN_INGEST_URL and FLIGHTPLAN_INGEST_TOKEN unset"}
+    _, ep_path, _ = KIND_TABLES["tokometer_usage"]
+    body = {"schema_version": SCHEMA_VERSION, "host": _host(), "rows": [heartbeat_row(now)]}
+    status, payload = _post(f"{ingest_url.rstrip('/')}/ingest/{ep_path}", token, body)
+    return {"ok": status == 200, "status": status}
+
+
 # ─── KNOWN_LIMITATIONS ────────────────────────────────────────────────────
 #
 # 1. Watermark = source-table rowid (insertion order), persisted per kind in
@@ -469,6 +510,7 @@ def push_all(*, kinds: Iterable[str] | None = None,
 if __name__ == "__main__":
     import sys
     out = push_all()
+    out["heartbeat"] = send_heartbeat()
     json.dump(out, sys.stdout, indent=2)
     print()
     sys.exit(0 if out["ok"] else 1)

@@ -171,10 +171,41 @@ Anthropic doesn't publish fixed token thresholds and Claude Code stores no live 
 export TOKOMETER_CLAUDE_LIMIT_5H="..."   # also _24H, _7D, _OPUS7D
 ```
 
+## One report for every machine
+
+Each machine with a `flightplan.env` pushes its rows to Beaufort's `bronze.tokometer_usage`. On the hub,
+`fleet.sh` (cron, 04:40, after every machine's 04:00 harvest and push) reads them back with a read-only
+role and renders the same report over all of them, plus a Machines table, into
+`~/.tokometer/reports/fleet-<date>.html` and `fleet-latest.html`. It also writes `fleet-summary.json`,
+whose lines `kata-tokens` prints verbatim for a daily chat summary:
+
+```text
+:bar_chart: Tokens yesterday: 412M on 5 machines, $86 list value
+   MTD $1.9K: Acme team $1.2K · Personal max $610 · Local $25
+:warning: bladerunner14: no data since Tue
+```
+
+A machine is flagged when Beaufort has not heard from it for more than 26 hours, or when it runs a different
+build from the hub. Every push run also sends one zero-token heartbeat row per machine per day, so an idle
+machine still counts as heard from; the fleet report keeps heartbeat rows out of every total. On a Mac,
+`fleet_open.sh` (LaunchAgent `ai.tokometer.fleet-open`, 05:05) copies the hub's page over ssh and opens it,
+and falls back to the Mac's own report with a banner when today's page is not there.
+
+```sh
+# hub: ~/.tokometer/fleet.env (plain KEY=VALUE, mode 600)
+FLEET_PG_HOST=…  FLEET_PG_PORT=…  FLEET_PG_DB=…  FLEET_PG_USER=…  FLEET_PG_PASSWORD=…
+FLEET_SINCE=2026-11-28                      # the count starts here; month to date after that
+FLEET_HOSTS="studio bladerunner14 dev …"    # machines to flag when they go quiet
+FLEET_PYTHON=…                              # an interpreter with psycopg2
+# a Mac that opens the page: ~/.tokometer/fleet.env
+FLEET_HUB=hub.local
+```
+
 ## Privacy
 
-Everything is local. Each collector reads what a tool already writes on disk and normalizes it into
-`~/.tokometer/ledger.db`; the ledger never leaves your machine. Full design notes and per-harness collection
+Each collector reads what a tool already writes on disk and normalizes it into `~/.tokometer/ledger.db`.
+Rows leave the machine only when a `flightplan.env` configures the push to your own Beaufort, and the
+fleet report reads them back from there. Full design notes and per-harness collection
 details are in **[DESIGN.md](DESIGN.md)**.
 
 ## Caveats

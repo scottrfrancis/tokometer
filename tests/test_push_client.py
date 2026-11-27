@@ -7,6 +7,7 @@ tokometer's stdlib-only discipline for tests too).
 from __future__ import annotations
 
 import json
+import os
 import socket
 import sqlite3
 import threading
@@ -472,3 +473,49 @@ def test_push_all_caps_batches_per_run(mock_ingest, tmp_tokometer):
     assert len(mock_ingest.requests) == 3
     from push import state as ps
     assert ps.watermark(ps.load(), "tokometer_usage") == 3
+
+
+# ─── heartbeat ─────────────────────────────────────────────────────────────
+#
+# The fleet report flags a machine Beaufort has not heard from. Usage rows
+# cannot show that: an idle machine sends none. So each run also sends one
+# zero-token row per machine per day, naming the build; the fleet report keeps
+# heartbeat rows out of every total.
+
+def test_heartbeat_is_a_zero_token_row_naming_the_machine_build_and_day(
+        mock_ingest, tmp_tokometer, monkeypatch):
+    import datetime as dt
+    monkeypatch.setenv("TOKOMETER_HOST", "studio")
+    (tmp_tokometer / "VERSION").write_text("0d06d72\n")
+    now = dt.datetime(2026, 11, 28, 12, 5, 9, tzinfo=dt.timezone.utc)
+
+    out = pc.send_heartbeat(ingest_url=mock_ingest.url, token="t", now=now)
+
+    assert out["ok"] is True
+    ((path, body),) = mock_ingest.requests
+    assert path == "/ingest/tokometer-usage"
+    (row,) = body["rows"]
+    assert row["uid"] == f"heartbeat:studio:{now.astimezone().date().isoformat()}"
+    assert (row["host"], row["harness"], row["ts"]) == ("studio", "tokometer", "2026-11-28T12:05:09Z")
+    assert [row[k] for k in ("input_tokens", "output_tokens", "cache_read", "cache_write")] == [0] * 4
+    assert row["meta"] == {"source": "heartbeat", "confidence": "exact",
+                           "tokometer_version": "0d06d72"}
+    assert set(row) <= BEAUFORT_USAGE_FIELDS
+
+
+def test_a_push_run_sends_its_heartbeat_after_the_rows(mock_ingest, tmp_tokometer):
+    import subprocess
+    import sys
+    _seed_usage(tmp_tokometer, 2)
+    mock_ingest.response_body = {"accepted": 2, "conflicted": 0}
+    env = {"TOKOMETER_HOME": str(tmp_tokometer), "TOKOMETER_HOST": "studio",
+           "FLIGHTPLAN_INGEST_URL": mock_ingest.url, "FLIGHTPLAN_INGEST_TOKEN": "t",
+           "PATH": os.environ["PATH"]}
+
+    run = subprocess.run([sys.executable, "-m", "push.client"], cwd=str(Path(__file__).parents[1]),
+                         env=env, capture_output=True, text=True, timeout=60)
+
+    assert run.returncode == 0, run.stderr
+    usage = [b["rows"] for p, b in mock_ingest.requests if p == "/ingest/tokometer-usage"]
+    assert [r["uid"] for r in usage[0]] == ["u-drain-0", "u-drain-1"]
+    assert usage[-1][0]["uid"].startswith("heartbeat:studio:")
