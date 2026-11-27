@@ -18,6 +18,10 @@ cp "$SRC/report_html.py"           "$TOKOMETER_HOME/report_html.py"
 cp "$SRC/monthly.py"               "$TOKOMETER_HOME/monthly.py"
 cp "$SRC/price_check.py"           "$TOKOMETER_HOME/price_check.py"
 chmod +x "$TOKOMETER_HOME/harvest.sh" "$TOKOMETER_HOME/daily.sh"
+# the build being installed: push.client stamps it on every usage row, so the
+# fleet report can flag a machine left on an old build
+git -C "$SRC" describe --always --dirty > "$TOKOMETER_HOME/VERSION" 2>/dev/null \
+  || echo unknown > "$TOKOMETER_HOME/VERSION"
 
 # Run SQL against the ledger, from stdin or from the first argument. Uses the
 # sqlite3 CLI when it is installed and python3's sqlite3 module otherwise: a

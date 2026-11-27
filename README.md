@@ -131,7 +131,14 @@ export TOKOMETER_HARNESSES="opencode omp claude_code git_metrics gh_metrics"
 export TOKOMETER_GIT_ROOT="$HOME/workspace"
 export TOKOMETER_GIT_AUTHOR="you@example.com"   # your commit identities, comma-separated, or '*'
 export TOKOMETER_GIT_DEPTH="4"
+
+# Count only activity from this local date on (YYYY-MM-DD). Set it when a machine moves to a
+# new build or you switch on a collector, so files read again can't add rows for past days.
+# export TOKOMETER_COLLECT_SINCE="2026-11-28"
 ```
+
+With a `flightplan.env` present, `daily.sh` also pushes to Beaufort straight after the harvest, and
+every pushed usage row names the build `install.sh` recorded in `~/.tokometer/VERSION`.
 
 ## Multi-account Claude Code
 
