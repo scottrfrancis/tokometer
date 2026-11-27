@@ -70,6 +70,8 @@ When does the work actually happen? Peak days and peak hours, at a glance.
 | **Claude Code** | anthropic | session transcripts + per-account attribution | exact, per-message |
 | **OpenCode** | local/any | `opencode.db` message rows | exact, per-message |
 | **OMP** | self-hosted / any | session transcripts; self-hosted providers grouped as `Local` | exact, per-message |
+| **OpenClaw** | self-hosted / any | agent event store (`openclaw-agent.sqlite`, read-only) | exact, per-call |
+| **Open WebUI** | self-hosted / any | `webui.db` chat messages, through `docker exec` when it runs in a container | exact, per-reply |
 | **Droid** (Factory) | factory | session sidecars | exact, per-session |
 | **GitHub Copilot CLI** | github | session event logs | estimate (output-only) |
 | **Cursor** | cursor | dashboard scrape via Playwright *(optional)* | estimate |
@@ -124,7 +126,7 @@ The scheduled `daily.sh` harvests, rolls over the month, regenerates the HTML re
 ```sh
 # Which harnesses to harvest + show. Drop the ones you don't use: they leave the report
 # entirely (table, charts, advisories all follow this list).
-# Available: opencode omp droid copilot claude_code git_metrics gh_metrics cursor
+# Available: opencode omp openclaw openwebui droid copilot claude_code git_metrics gh_metrics cursor
 export TOKOMETER_HARNESSES="opencode omp claude_code git_metrics gh_metrics"
 
 # Repos live here, scanned recursively (so nested <root>/<group>/<repo> layouts are covered).
@@ -135,6 +137,13 @@ export TOKOMETER_GIT_DEPTH="4"
 # Count only activity from this local date on (YYYY-MM-DD). Set it when a machine moves to a
 # new build or you switch on a collector, so files read again can't add rows for past days.
 # export TOKOMETER_COLLECT_SINCE="2026-11-28"
+
+# Record a client's generic server name as the server's own provider name, so OpenClaw and
+# Open WebUI calls group and price with OMP's calls to the same server.
+# export TOKOMETER_PROVIDER_ALIASES="vllm=dev-ai"
+# Open WebUI: the container to query (docker exec), or a local webui.db.
+# export TOKOMETER_OPENWEBUI_CONTAINER="open-webui"
+# export TOKOMETER_OPENWEBUI_DB="$HOME/open-webui/webui.db"
 ```
 
 With a `flightplan.env` present, `daily.sh` also pushes to Beaufort straight after the harvest, and
