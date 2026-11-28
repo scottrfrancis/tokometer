@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -216,3 +217,46 @@ def test_iter_finds_omp_global_session_logs(tmp_path):
 
     got = {(p.name, scope) for p, scope, _ in paths}
     assert got == {("2026-11-24-0900-omp.md", "global"), ("2026-11-01-0800-old.md", "global")}
+
+
+def test_collect_skips_dangling_symlink_and_keeps_going(
+    tmp_tokometer, tmp_home_with_logs, capsys
+):
+    # A session-logs symlink whose target was deleted used to raise
+    # FileNotFoundError and abort the whole run (hasami, 2026-08-29 onward).
+    gdir = tmp_home_with_logs / ".claude" / "session-logs"
+    dangling = gdir / "handoff-2026-08-24-0845.md"
+    dangling.symlink_to(tmp_home_with_logs / "gone" / "handoff-2026-08-24-0845.md")
+
+    con = sqlite3.connect(str(tmp_tokometer / "ledger.db"))
+    result = sl.collect(con=con, home=tmp_home_with_logs,
+                        repo_root=tmp_home_with_logs / "repos")
+    count = con.execute("SELECT COUNT(*) FROM session_log_raw").fetchone()[0]
+    con.close()
+
+    assert result["scanned"] == 5
+    assert result["inserted"] == 4
+    assert result["skipped"] == 1
+    assert count == 4
+    assert str(dangling) in capsys.readouterr().err
+
+
+def test_collect_skips_unreadable_file_and_keeps_going(
+    tmp_tokometer, tmp_home_with_logs, capsys
+):
+    if os.geteuid() == 0:
+        pytest.skip("root reads mode-000 files")
+    locked = tmp_home_with_logs / ".claude" / "session-logs" / "2026-06-14-0800-locked.md"
+    locked.write_text("# Locked\nbody")
+    locked.chmod(0)
+    try:
+        con = sqlite3.connect(str(tmp_tokometer / "ledger.db"))
+        result = sl.collect(con=con, home=tmp_home_with_logs,
+                            repo_root=tmp_home_with_logs / "repos")
+        con.close()
+    finally:
+        locked.chmod(0o644)
+
+    assert result["inserted"] == 4
+    assert result["skipped"] == 1
+    assert str(locked) in capsys.readouterr().err

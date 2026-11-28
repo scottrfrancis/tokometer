@@ -205,9 +205,17 @@ def collect(
                 counts["skipped"] += 1
                 continue
 
-            raw_md, sha = _read_md(abs_path)
+            # One missing or unreadable file (a dangling symlink, a mode-000
+            # file) must not abort the run: skip it, name it, keep going.
+            try:
+                raw_md, sha = _read_md(abs_path)
+                stat = abs_path.stat()
+            except OSError as exc:
+                print(f"session_logs: skipping unreadable {abs_path}: {exc}",
+                      file=sys.stderr)
+                counts["skipped"] += 1
+                continue
             rel = _rel_filepath(abs_path, scope, source_project, home)
-            stat = abs_path.stat()
             mtime_iso = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
             uid = _uid(host, sha)
 
